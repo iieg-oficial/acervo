@@ -22,6 +22,8 @@ services:
     image: minio/minio:latest
     container_name: acervo-minio
     command: server /data --console-address ":9001"
+    extra_hosts:
+      - "${S3_DOMAIN}:host-gateway"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -29,6 +31,7 @@ services:
       MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
     volumes:
       - minio_data:/data
+      - ./nginx/ssl/${S3_DOMAIN}.crt:/root/.minio/certs/CAs/${S3_DOMAIN}.crt:ro
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
