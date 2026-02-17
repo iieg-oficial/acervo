@@ -1,0 +1,1 @@
+0 2 * * * /bin/bash /opt/acervo/scripts/backup.sh >> /var/log/acervo-backup.log 2>&1
