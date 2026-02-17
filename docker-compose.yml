@@ -87,6 +87,9 @@ services:
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    tmpfs:
+      - /root/.mc
+      - /tmp
     depends_on:
       minio:
         condition: service_healthy
@@ -95,8 +98,6 @@ services:
     restart: "no"
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
     logging:
       driver: json-file
       options:
