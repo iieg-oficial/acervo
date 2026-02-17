@@ -43,7 +43,7 @@ POLICY
         echo "User $USER already exists, skipping creation"
     else
         echo "Creating user: $USER"
-        mc admin user add "$ALIAS" "$USER" "$PASS"        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user "$USER"        echo "=========================================="
+        mc admin user add "$ALIAS" "$USER" "$PASS"        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user="$USER"        echo "=========================================="
         echo "  Bucket:   $BUCKET"
         echo "  User:     $USER"
         echo "  Password: $PASS"
