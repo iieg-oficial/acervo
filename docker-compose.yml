@@ -37,12 +37,6 @@ services:
       - /var/cache/nginx
       - /var/run
       - /etc/nginx/conf.d/dynamic:mode=755
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-          cpus: "0.5"
-          pids: 200
     logging:
       driver: json-file
       options:
@@ -73,12 +67,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-          cpus: "2"
-          pids: 200
     logging:
       driver: json-file
       options:
