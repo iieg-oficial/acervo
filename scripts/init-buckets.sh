@@ -39,11 +39,13 @@ POLICY
     USER="${BUCKET}-user"
     PASS=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 
-    if mc admin user info "$ALIAS" "$USER" --insecure >/dev/null 2>&1; then
+    if mc admin user info "$ALIAS" "$USER" >/dev/null 2>&1; then
         echo "User $USER already exists, skipping creation"
     else
         echo "Creating user: $USER"
-        mc admin user add "$ALIAS" "$USER" "$PASS"        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user="$USER"        echo "=========================================="
+        mc admin user add "$ALIAS" "$USER" "$PASS"
+        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user "$USER"
+        echo "=========================================="
         echo "  Bucket:   $BUCKET"
         echo "  User:     $USER"
         echo "  Password: $PASS"
