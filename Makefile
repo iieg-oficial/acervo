@@ -75,7 +75,7 @@ restart: down up
 
 restart-nginx:
 	@echo "${GREEN}Reiniciando Nginx...${RESET}"
-	$(COMPOSE_CMD) restart nginx
+	$(COMPOSE_CMD) up -d --force-recreate nginx
 
 clean:
 	@echo "${YELLOW}Limpiando sistema (contenedores, redes y volúmenes)...${RESET}"
