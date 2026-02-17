@@ -111,6 +111,7 @@ certs:
 		-out nginx/ssl/acervo.crt \
 		-subj "/C=MX/ST=Jalisco/L=Guadalajara/O=IIEG/CN=$$SERVER_IP" \
 		-addext "subjectAltName=IP:$$SERVER_IP" 2>/dev/null; \
+	chmod 644 nginx/ssl/acervo.key nginx/ssl/acervo.crt; \
 	echo "${GREEN}Certificado generado para IP: $$SERVER_IP${RESET}"
 
 init-buckets:

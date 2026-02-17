@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-MINIO_HOST="https://acervo-minio:9000"
+MINIO_HOST="http://acervo-minio:9000"
 ALIAS="acervo"
 BUCKETS="mapalab dateengine portal"
 
@@ -14,8 +14,7 @@ echo "MinIO connection established"
 
 for BUCKET in $BUCKETS; do
     echo "Creating bucket: $BUCKET"
-    mc mb "${ALIAS}/${BUCKET}" --ignore-existing --insecure
-
+    mc mb "${ALIAS}/${BUCKET}" --ignore-existing
     POLICY_FILE="/tmp/policy-${BUCKET}.json"
     cat > "$POLICY_FILE" <<POLICY
 {
@@ -36,8 +35,7 @@ POLICY
     POLICY_NAME="policy-${BUCKET}"
     echo "Creating policy: $POLICY_NAME"
     mc admin policy create "$ALIAS" "$POLICY_NAME" "$POLICY_FILE" --insecure 2>/dev/null || \
-        mc admin policy create "$ALIAS" "$POLICY_NAME" "$POLICY_FILE" --insecure
-
+        mc admin policy create "$ALIAS" "$POLICY_NAME" "$POLICY_FILE"
     USER="${BUCKET}-user"
     PASS=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 
@@ -45,9 +43,7 @@ POLICY
         echo "User $USER already exists, skipping creation"
     else
         echo "Creating user: $USER"
-        mc admin user add "$ALIAS" "$USER" "$PASS" --insecure
-        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user "$USER" --insecure
-        echo "=========================================="
+        mc admin user add "$ALIAS" "$USER" "$PASS"        mc admin policy attach "$ALIAS" "$POLICY_NAME" --user "$USER"        echo "=========================================="
         echo "  Bucket:   $BUCKET"
         echo "  User:     $USER"
         echo "  Password: $PASS"
