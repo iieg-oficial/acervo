@@ -51,6 +51,25 @@ POLICY
         echo "  Password: $PASS"
         echo "=========================================="
     fi
+
+    if [ "$BUCKET" = "portal" ]; then
+        echo "Setting public GetObject-only policy on bucket: $BUCKET"
+        ANON_POLICY_FILE="/tmp/anon-policy-${BUCKET}.json"
+        cat > "$ANON_POLICY_FILE" <<ANONPOLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {"AWS": ["*"]},
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::${BUCKET}/*"]
+    }
+  ]
+}
+ANONPOLICY
+        mc anonymous set-json "$ANON_POLICY_FILE" "${ALIAS}/${BUCKET}"
+    fi
 done
 
 echo "Bucket initialization complete"
