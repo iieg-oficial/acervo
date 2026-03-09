@@ -52,7 +52,7 @@ POLICY
         echo "=========================================="
     fi
 
-    if [ "$BUCKET" = "portal" ]; then
+    if [ "$BUCKET" = "portal" ] || [ "$BUCKET" = "mapalab" ]; then
         echo "Setting public GetObject-only policy on bucket: $BUCKET"
         ANON_POLICY_FILE="/tmp/anon-policy-${BUCKET}.json"
         cat > "$ANON_POLICY_FILE" <<ANONPOLICY
