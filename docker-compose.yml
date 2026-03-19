@@ -78,6 +78,7 @@ services:
         max-file: "5"
 
   acervo-init:
+    profiles: ["init"]
     image: minio/mc
     container_name: acervo-init
     entrypoint: ["/bin/sh", "/scripts/init-buckets.sh"]

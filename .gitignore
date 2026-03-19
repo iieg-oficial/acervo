@@ -1,7 +1,4 @@
-.env
-.env.development
-.env.local
-.env.*.local
+*.env*
 !.env.example
 
 .minio.sys/
