@@ -1,0 +1,68 @@
+name: acervo
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: acervo-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
+      MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - acervo_network
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  acervo-init:
+    profiles: ["init"]
+    image: minio/mc
+    container_name: acervo-init
+    entrypoint: ["/bin/sh", "/scripts/init-buckets.sh"]
+    volumes:
+      - ./scripts/init-buckets.sh:/scripts/init-buckets.sh:ro
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    tmpfs:
+      - /root/.mc
+      - /tmp
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - acervo_network
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  minio_data:
+
+networks:
+  acervo_network:
+    driver: bridge

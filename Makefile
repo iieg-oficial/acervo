@@ -3,12 +3,19 @@ YELLOW := $(shell tput -Txterm setaf 3)
 WHITE  := $(shell tput -Txterm setaf 7)
 RESET  := $(shell tput -Txterm sgr0)
 
-ENV ?= dev
+ENV  ?= dev
+INFRA ?= standalone
 
 ifeq ($(ENV),prod)
-	COMPOSE_FILE := docker-compose.yml
-	ENV_FILE     := .env
-	MSG_ENV      := Producción
+	ifeq ($(INFRA),gateway)
+		COMPOSE_FILE := docker-compose.gateway.yml
+		ENV_FILE     := .env.gateway
+		MSG_ENV      := Producción (gateway)
+	else
+		COMPOSE_FILE := docker-compose.yml
+		ENV_FILE     := .env
+		MSG_ENV      := Producción (standalone)
+	endif
 else
 	COMPOSE_FILE := docker-compose.dev.yml
 	ENV_FILE     := .env.development
@@ -24,8 +31,8 @@ help:
 	@echo ''
 	@echo '${YELLOW}IIEG Acervo - Comandos disponibles${RESET}'
 	@echo ''
-	@echo 'Uso: ${YELLOW}make <comando> [ENV=dev|prod]${RESET}'
-	@echo '     (Por defecto ENV=dev)'
+	@echo 'Uso: ${YELLOW}make <comando> [ENV=dev|prod] [INFRA=standalone|gateway]${RESET}'
+	@echo '     (Por defecto ENV=dev, INFRA=standalone)'
 	@echo ''
 	@echo '${GREEN}Comandos Generales:${RESET}'
 	@echo '  ${YELLOW}make up${RESET}              - Inicia el entorno (en segundo plano)'
@@ -33,7 +40,7 @@ help:
 	@echo '  ${YELLOW}make down${RESET}            - Detiene todos los contenedores'
 	@echo '  ${YELLOW}make logs${RESET}            - Muestra logs en tiempo real'
 	@echo '  ${YELLOW}make restart${RESET}         - Reinicia el entorno'
-	@echo '  ${YELLOW}make restart-nginx${RESET}   - Reinicia solo Nginx (para aplicar cambios de IPs)'
+	@echo '  ${YELLOW}make restart-nginx${RESET}   - Reinicia solo Nginx (solo standalone)'
 	@echo ''
 	@echo '${GREEN}Buckets y Datos:${RESET}'
 	@echo '  ${YELLOW}make init-buckets${RESET}    - Crear buckets y usuarios por sistema'
@@ -81,6 +88,7 @@ clean:
 	@echo "${YELLOW}Limpiando sistema (contenedores, redes y volúmenes)...${RESET}"
 	docker compose -f docker-compose.dev.yml down -v --remove-orphans || true
 	docker compose -f docker-compose.yml down -v --remove-orphans || true
+	docker compose -f docker-compose.gateway.yml down -v --remove-orphans || true
 
 shell-minio:
 	$(COMPOSE_CMD) exec minio /bin/sh
@@ -100,6 +108,12 @@ setup:
 		echo "${GREEN}Creado .env desde ejemplo${RESET}"; \
 	else \
 		echo "${YELLOW}.env ya existe${RESET}"; \
+	fi
+	@if [ ! -f .env.gateway ]; then \
+		cp .env.gateway.example .env.gateway; \
+		echo "${GREEN}Creado .env.gateway desde ejemplo${RESET}"; \
+	else \
+		echo "${YELLOW}.env.gateway ya existe${RESET}"; \
 	fi
 
 certs:

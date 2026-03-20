@@ -1,5 +1,7 @@
 *.env*
 !.env.example
+!.env.gateway.example
+!.env.development.example
 
 .minio.sys/
 *.log
