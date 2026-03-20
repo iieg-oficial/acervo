@@ -13,6 +13,7 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
     environment:
       CONSOLE_ALLOWED_IPS: ${CONSOLE_ALLOWED_IPS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     entrypoint: ["/docker-entrypoint.d/nginx-entrypoint.sh"]
     configs:
       - source: nginx_entrypoint
