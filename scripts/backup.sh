@@ -4,9 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-if [ -f "$PROJECT_DIR/.env" ]; then
+ENV_FILE="${ENV_FILE:-.env}"
+if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
     set -a
-    . "$PROJECT_DIR/.env"
+    . "$PROJECT_DIR/$ENV_FILE"
     set +a
 fi
 

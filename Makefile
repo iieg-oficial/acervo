@@ -137,7 +137,7 @@ init-buckets:
 
 backup:
 	@echo "${GREEN}Ejecutando respaldo manual...${RESET}"
-	@bash scripts/backup.sh
+	@ENV_FILE=$(ENV_FILE) bash scripts/backup.sh
 
 restore:
 	@if [ -z "$(DATE)" ]; then \
@@ -145,7 +145,7 @@ restore:
 		exit 1; \
 	fi
 	@echo "${GREEN}Restaurando respaldo del $(DATE)...${RESET}"
-	@bash scripts/restore.sh $(DATE) $(BUCKET)
+	@ENV_FILE=$(ENV_FILE) bash scripts/restore.sh $(DATE) $(BUCKET)
 
 backup-list:
 	@echo "${GREEN}Respaldos disponibles:${RESET}"
@@ -156,7 +156,7 @@ backup-list:
 cron-install:
 	@echo "${GREEN}Instalando cron de respaldos...${RESET}"
 	@ACERVO_DIR=$$(pwd); \
-	sed "s|/opt/acervo|$$ACERVO_DIR|g" scripts/backup-cron | crontab -
+	sed -e "s|/opt/acervo|$$ACERVO_DIR|g" -e "s|/bin/bash|/usr/bin/env ENV_FILE=$(ENV_FILE) /bin/bash|g" scripts/backup-cron | crontab -
 	@echo "${GREEN}Cron instalado. Respaldos mensuales el dia 1 a las 3:00 AM${RESET}"
 
 cron-remove:
