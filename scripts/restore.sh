@@ -34,12 +34,9 @@ DATE="$1"
 TARGET_BUCKET="${2:-}"
 
 ARCHIVE=""
-for DIR in daily weekly monthly; do
-    if [ -f "${BACKUP_DIR}/${DIR}/backup-${DATE}.tar.gz" ]; then
-        ARCHIVE="${BACKUP_DIR}/${DIR}/backup-${DATE}.tar.gz"
-        break
-    fi
-done
+if [ -f "${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz" ]; then
+    ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
+fi
 
 if [ -z "$ARCHIVE" ]; then
     echo "ERROR: No backup found for date ${DATE}"
@@ -66,15 +63,17 @@ for BUCKET in $BUCKETS; do
         continue
     fi
 
+    # Determinar dinámicamente la red del contenedor acervo-minio
+    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' | head -n 1)
+
     echo "Restoring bucket: $BUCKET"
     docker run --rm \
-        --network acervo_acervo_internal \
+        --network "${MINIO_NETWORK}" \
         -v "${RESTORE_DIR}:/restore:ro" \
-        -v "${PROJECT_DIR}/nginx/ssl/acervo.crt:/etc/ssl/certs/acervo.crt:ro" \
         minio/mc sh -c "
-            mc alias set acervo https://acervo-minio:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' --insecure && \
-            mc mb acervo/${BUCKET} --ignore-existing --insecure && \
-            mc mirror /restore/${BUCKET} acervo/${BUCKET} --overwrite --insecure
+            mc alias set acervo http://acervo-minio:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
+            mc mb acervo/${BUCKET} --ignore-existing && \
+            mc mirror /restore/${BUCKET} acervo/${BUCKET} --overwrite
         "
     echo "Bucket $BUCKET restored"
 done

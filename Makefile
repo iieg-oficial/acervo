@@ -58,7 +58,7 @@ help:
 	@echo '  ${YELLOW}firewall-setup${RESET}    - Configurar UFW ${WHITE}(requiere root)${RESET}'
 	@echo ''
 	@echo '${GREEN}Cron:${RESET}'
-	@echo '  ${YELLOW}cron-install${RESET}      - Instalar cron de respaldos (diario 2:00 AM)'
+	@echo '  ${YELLOW}cron-install${RESET}      - Instalar cron de respaldos (mensual, dia 1 a las 3:00 AM)'
 	@echo '  ${YELLOW}cron-remove${RESET}       - Desinstalar cron de respaldos'
 	@echo ''
 	@echo '${GREEN}Utilidades:${RESET}'
@@ -150,10 +150,6 @@ restore:
 backup-list:
 	@echo "${GREEN}Respaldos disponibles:${RESET}"
 	@echo ""
-	@echo "${YELLOW}Diarios:${RESET}"
-	@ls -la $(BACKUP_DIR)/daily/backup-*.tar.gz 2>/dev/null || echo "  (ninguno)"
-	@echo "${YELLOW}Semanales:${RESET}"
-	@ls -la $(BACKUP_DIR)/weekly/backup-*.tar.gz 2>/dev/null || echo "  (ninguno)"
 	@echo "${YELLOW}Mensuales:${RESET}"
 	@ls -la $(BACKUP_DIR)/monthly/backup-*.tar.gz 2>/dev/null || echo "  (ninguno)"
 
@@ -161,7 +157,7 @@ cron-install:
 	@echo "${GREEN}Instalando cron de respaldos...${RESET}"
 	@ACERVO_DIR=$$(pwd); \
 	sed "s|/opt/acervo|$$ACERVO_DIR|g" scripts/backup-cron | crontab -
-	@echo "${GREEN}Cron instalado. Respaldos diarios a las 2:00 AM${RESET}"
+	@echo "${GREEN}Cron instalado. Respaldos mensuales el dia 1 a las 3:00 AM${RESET}"
 
 cron-remove:
 	@echo "${YELLOW}Desinstalando cron de respaldos...${RESET}"
