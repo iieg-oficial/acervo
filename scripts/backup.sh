@@ -43,7 +43,8 @@ for BUCKET in $BUCKETS; do
     docker run --rm \
         --network "${MINIO_NETWORK}" \
         -v "${MONTHLY_DIR}:/backup" \
-        minio/mc sh -c "
+        --entrypoint=/bin/sh \
+        minio/mc -c "
             mc alias set acervo http://acervo-minio:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
             mc mirror acervo/${BUCKET} /backup/${BUCKET}
         " 2>&1 | tee -a "$LOG_FILE"
