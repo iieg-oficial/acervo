@@ -15,31 +15,45 @@ BACKUP_DIR="${BACKUP_DIR:-/backups/acervo}"
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
 MINIO_SECRET_KEY="${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
 
-usage() {
-    echo "Usage: $0 <DATE> [BUCKET]"
-    echo ""
-    echo "  DATE    Backup date (YYYY-MM-DD)"
-    echo "  BUCKET  Optional: specific bucket to restore (mapalab, dateengine, portal)"
-    echo ""
-    echo "Examples:"
-    echo "  $0 2026-01-15              # Restore all buckets from Jan 15"
-    echo "  $0 2026-01-15 mapalab      # Restore only mapalab bucket"
-    exit 1
-}
-
-if [ $# -lt 1 ]; then
-    usage
-fi
-
-DATE="$1"
+DATE="${1:-}"
 TARGET_BUCKET="${2:-}"
 
-ARCHIVE=""
-if [ -f "${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz" ]; then
+# Si no se pasó fecha, mostrar lista interactiva
+if [ -z "$DATE" ]; then
+    echo "Buscando respaldos disponibles en ${BACKUP_DIR}/monthly..."
+    
+    # Obtener lista de respaldos ordenados por fecha desc
+    BACKUPS=($(ls -1 ${BACKUP_DIR}/monthly/backup-*.tar.gz 2>/dev/null | sort -r || true))
+    
+    if [ ${#BACKUPS[@]} -eq 0 ]; then
+        echo "No se encontraron respaldos en ${BACKUP_DIR}/monthly."
+        exit 1
+    fi
+
+    echo ""
+    echo "Respaldos disponibles:"
+    for i in "${!BACKUPS[@]}"; do
+        FILENAME=$(basename "${BACKUPS[$i]}")
+        DATE_STR=$(echo "$FILENAME" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
+        echo "  [$((i+1))] $DATE_STR"
+    done
+    echo ""
+    
+    read -p "Elige el número del respaldo a restaurar (1-${#BACKUPS[@]}): " SELECTION
+    
+    if ! [[ "$SELECTION" =~ ^[0-9]+$ ]] || [ "$SELECTION" -lt 1 ] || [ "$SELECTION" -gt "${#BACKUPS[@]}" ]; then
+        echo "Selección inválida."
+        exit 1
+    fi
+    
+    SELECTED_FILE="${BACKUPS[$((SELECTION-1))]}"
+    DATE=$(basename "$SELECTED_FILE" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
+    ARCHIVE="$SELECTED_FILE"
+else
     ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
 fi
 
-if [ -z "$ARCHIVE" ]; then
+if [ ! -f "$ARCHIVE" ]; then
     echo "ERROR: No backup found for date ${DATE}"
     echo "Available backups:"
     find "$BACKUP_DIR" -name "backup-*.tar.gz" -printf "  %f (%h)\n" 2>/dev/null | sort

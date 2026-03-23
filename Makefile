@@ -140,11 +140,7 @@ backup:
 	@ENV_FILE=$(ENV_FILE) bash scripts/backup.sh
 
 restore:
-	@if [ -z "$(DATE)" ]; then \
-		echo "${YELLOW}Uso: make restore DATE=YYYY-MM-DD [BUCKET=nombre]${RESET}"; \
-		exit 1; \
-	fi
-	@echo "${GREEN}Restaurando respaldo del $(DATE)...${RESET}"
+	@echo "${GREEN}Restaurando respaldo...${RESET}"
 	@ENV_FILE=$(ENV_FILE) bash scripts/restore.sh $(DATE) $(BUCKET)
 
 backup-list:
