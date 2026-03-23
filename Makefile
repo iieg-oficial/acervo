@@ -90,10 +90,8 @@ restart-nginx:
 	$(COMPOSE_CMD) up -d --force-recreate nginx
 
 clean:
-	@echo "${YELLOW}Limpiando sistema (contenedores, redes y volúmenes)...${RESET}"
-	docker compose -f docker-compose.dev.yml down -v --remove-orphans || true
-	docker compose -f docker-compose.yml down -v --remove-orphans || true
-	docker compose -f docker-compose.gateway.yml down -v --remove-orphans || true
+	@echo "${YELLOW}Limpiando entorno de $(MSG_ENV) (contenedores, redes y volúmenes)...${RESET}"
+	$(COMPOSE_CMD) down -v --remove-orphans
 
 shell-minio:
 	$(COMPOSE_CMD) exec minio /bin/sh
