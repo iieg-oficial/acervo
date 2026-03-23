@@ -151,7 +151,7 @@ backup-list:
 	@echo "${GREEN}Respaldos disponibles:${RESET}"
 	@echo ""
 	@echo "${YELLOW}Mensuales:${RESET}"
-	@ls -la $(BACKUP_DIR)/monthly/backup-*.tar.gz 2>/dev/null || echo "  (ninguno)"
+	@bash -c 'source $(ENV_FILE); ls -la $${BACKUP_DIR:-/backups/acervo}/monthly/backup-*.tar.gz 2>/dev/null || echo "  (ninguno)"'
 
 cron-install:
 	@echo "${GREEN}Instalando cron de respaldos...${RESET}"
