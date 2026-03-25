@@ -13,6 +13,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
       MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     volumes:
       - minio_data:/data
     healthcheck:
@@ -22,6 +23,7 @@ services:
       retries: 3
     networks:
       - acervo_network
+      - iieg-network
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -66,3 +68,5 @@ volumes:
 networks:
   acervo_network:
     driver: bridge
+  iieg-network:
+    external: true
