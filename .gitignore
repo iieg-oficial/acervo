@@ -18,3 +18,5 @@ nginx/ssl/*.pfx
 secrets/
 credentials/
 *.secret
+
+*.tar.gz

@@ -18,46 +18,83 @@ MINIO_SECRET_KEY="${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
 DATE="${1:-}"
 TARGET_BUCKET="${2:-}"
 
-# Si no se pasó fecha, mostrar lista interactiva
-if [ -z "$DATE" ]; then
-    echo "Buscando respaldos disponibles en ${BACKUP_DIR}/monthly..."
-    
-    # Obtener lista de respaldos ordenados por fecha desc
-    BACKUPS=($(ls -1 ${BACKUP_DIR}/monthly/backup-*.tar.gz 2>/dev/null | sort -r || true))
-    
-    if [ ${#BACKUPS[@]} -eq 0 ]; then
-        echo "No se encontraron respaldos en ${BACKUP_DIR}/monthly."
-        exit 1
-    fi
+LOCAL_RESTORE_DIR="${PROJECT_DIR}/restore"
+SEARCH_DIRS=("${BACKUP_DIR}/monthly" "$LOCAL_RESTORE_DIR")
 
-    echo ""
-    echo "Respaldos disponibles:"
-    for i in "${!BACKUPS[@]}"; do
-        FILENAME=$(basename "${BACKUPS[$i]}")
-        DATE_STR=$(echo "$FILENAME" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
-        echo "  [$((i+1))] $DATE_STR"
+# Buscar respaldos en ambas rutas
+find_backups() {
+    local all=()
+    for dir in "${SEARCH_DIRS[@]}"; do
+        if [ -d "$dir" ]; then
+            while IFS= read -r f; do
+                [ -n "$f" ] && all+=("$f")
+            done < <(ls -1 "$dir"/backup-*.tar.gz 2>/dev/null | sort -r)
+        fi
     done
-    echo ""
-    
-    read -p "Elige el número del respaldo a restaurar (1-${#BACKUPS[@]}): " SELECTION
-    
-    if ! [[ "$SELECTION" =~ ^[0-9]+$ ]] || [ "$SELECTION" -lt 1 ] || [ "$SELECTION" -gt "${#BACKUPS[@]}" ]; then
-        echo "Selección inválida."
+    echo "${all[@]}"
+}
+
+if [ -z "$DATE" ]; then
+    echo "Buscando respaldos en:"
+    for dir in "${SEARCH_DIRS[@]}"; do
+        echo "  - $dir"
+    done
+
+    BACKUPS=($(find_backups))
+
+    if [ ${#BACKUPS[@]} -eq 0 ]; then
+        echo "No se encontraron respaldos."
         exit 1
     fi
-    
-    SELECTED_FILE="${BACKUPS[$((SELECTION-1))]}"
-    DATE=$(basename "$SELECTED_FILE" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
-    ARCHIVE="$SELECTED_FILE"
-else
-    ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
-fi
 
-if [ ! -f "$ARCHIVE" ]; then
-    echo "ERROR: No backup found for date ${DATE}"
-    echo "Available backups:"
-    find "$BACKUP_DIR" -name "backup-*.tar.gz" -printf "  %f (%h)\n" 2>/dev/null | sort
-    exit 1
+    if [ ${#BACKUPS[@]} -eq 1 ]; then
+        SELECTED_FILE="${BACKUPS[0]}"
+        DATE=$(basename "$SELECTED_FILE" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
+        ARCHIVE="$SELECTED_FILE"
+        echo ""
+        echo "Único respaldo encontrado: $DATE ($(dirname "$SELECTED_FILE"))"
+    else
+        echo ""
+        echo "Respaldos disponibles:"
+        for i in "${!BACKUPS[@]}"; do
+            FILENAME=$(basename "${BACKUPS[$i]}")
+            LOCATION=$(dirname "${BACKUPS[$i]}")
+            DATE_STR=$(echo "$FILENAME" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
+            echo "  [$((i+1))] $DATE_STR  ($LOCATION)"
+        done
+        echo ""
+
+        read -p "Elige el número del respaldo a restaurar (1-${#BACKUPS[@]}): " SELECTION
+
+        if ! [[ "$SELECTION" =~ ^[0-9]+$ ]] || [ "$SELECTION" -lt 1 ] || [ "$SELECTION" -gt "${#BACKUPS[@]}" ]; then
+            echo "Selección inválida."
+            exit 1
+        fi
+
+        SELECTED_FILE="${BACKUPS[$((SELECTION-1))]}"
+        DATE=$(basename "$SELECTED_FILE" | sed -E 's/backup-(.*)\.tar\.gz/\1/')
+        ARCHIVE="$SELECTED_FILE"
+    fi
+else
+    # Buscar en BACKUP_DIR primero, luego en ./restore
+    if [ -f "${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz" ]; then
+        ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
+    elif [ -f "${LOCAL_RESTORE_DIR}/backup-${DATE}.tar.gz" ]; then
+        ARCHIVE="${LOCAL_RESTORE_DIR}/backup-${DATE}.tar.gz"
+    else
+        echo "ERROR: No se encontró respaldo para la fecha ${DATE}"
+        echo ""
+        echo "Respaldos disponibles:"
+        BACKUPS=($(find_backups))
+        if [ ${#BACKUPS[@]} -gt 0 ]; then
+            for f in "${BACKUPS[@]}"; do
+                echo "  $(basename "$f")  ($(dirname "$f"))"
+            done
+        else
+            echo "  (ninguno)"
+        fi
+        exit 1
+    fi
 fi
 
 RESTORE_DIR=$(mktemp -d)
