@@ -55,7 +55,8 @@ done
 ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
 log "Compressing backup to ${ARCHIVE}"
 tar -czf "$ARCHIVE" -C "${MONTHLY_DIR}" .
-rm -rf "$MONTHLY_DIR"
+docker run --rm -v "${MONTHLY_DIR}:/cleanup" alpine rm -rf /cleanup
+rmdir "$MONTHLY_DIR" 2>/dev/null || true
 log "Compression complete"
 
 log "Rotating old backups"
