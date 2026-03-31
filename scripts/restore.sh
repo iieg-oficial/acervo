@@ -79,7 +79,7 @@ for BUCKET in $BUCKETS; do
     fi
 
     # Determinar dinámicamente la red del contenedor acervo-minio
-    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' | head -n 1)
+    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
 
     echo "Restoring bucket: $BUCKET"
     docker run --rm \

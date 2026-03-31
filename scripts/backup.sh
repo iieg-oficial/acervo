@@ -38,7 +38,7 @@ for BUCKET in $BUCKETS; do
     mkdir -p "$BUCKET_DIR"
 
     # Determinar dinámicamente la red del contenedor acervo-minio
-    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' | head -n 1)
+    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
     
     docker run --rm \
         --network "${MINIO_NETWORK}" \
