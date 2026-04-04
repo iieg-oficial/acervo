@@ -22,10 +22,11 @@ else
 	MSG_ENV      := Desarrollo
 endif
 
-COMPOSE_CMD := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
+COMPOSE_CMD       := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
+COMPOSE_CMD_INIT  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
 
 .PHONY: help up build down logs restart restart-nginx clean shell-minio shell-nginx setup certs \
-        init-buckets backup restore backup-list cron-install cron-remove firewall-setup
+        init-buckets backup restore backup-list cron-install cron-remove firewall-setup prometheus-token
 
 help:
 	@echo ''
@@ -48,7 +49,7 @@ help:
 	@echo '  ${YELLOW}restart-nginx${RESET}     - Reinicia solo Nginx ${WHITE}(standalone)${RESET}'
 	@echo ''
 	@echo '${GREEN}Buckets y Datos:${RESET}'
-	@echo '  ${YELLOW}init-buckets${RESET}      - Crear buckets y usuarios por sistema'
+	@echo '  ${YELLOW}init-buckets${RESET}      - Crear buckets y usuarios ${WHITE}[BUCKET=nombre]${RESET}'
 	@echo '  ${YELLOW}backup${RESET}            - Ejecutar respaldo manual'
 	@echo '  ${YELLOW}restore${RESET}           - Restaurar respaldo ${WHITE}(DATE=YYYY-MM-DD [BUCKET=nombre])${RESET}'
 	@echo '  ${YELLOW}backup-list${RESET}       - Listar respaldos disponibles'
@@ -60,6 +61,9 @@ help:
 	@echo '${GREEN}Cron:${RESET}'
 	@echo '  ${YELLOW}cron-install${RESET}      - Instalar cron de respaldos (mensual, dia 1 a las 3:00 AM)'
 	@echo '  ${YELLOW}cron-remove${RESET}       - Desinstalar cron de respaldos'
+	@echo ''
+	@echo '${GREEN}Monitoreo:${RESET}'
+	@echo '  ${YELLOW}prometheus-token${RESET}  - Generar JWT para scraping de Prometheus'
 	@echo ''
 	@echo '${GREEN}Utilidades:${RESET}'
 	@echo '  ${YELLOW}clean${RESET}             - Elimina contenedores, redes y volumenes'
@@ -133,7 +137,7 @@ certs:
 
 init-buckets:
 	@echo "${GREEN}Inicializando buckets y usuarios...${RESET}"
-	$(COMPOSE_CMD) run --rm acervo-init
+	$(COMPOSE_CMD_INIT) run --rm acervo-init $(BUCKET)
 
 backup:
 	@echo "${GREEN}Ejecutando respaldo manual...${RESET}"
@@ -159,6 +163,16 @@ cron-remove:
 	@echo "${YELLOW}Desinstalando cron de respaldos...${RESET}"
 	@crontab -r 2>/dev/null || true
 	@echo "${GREEN}Cron desinstalado${RESET}"
+
+prometheus-token:
+	@echo "${GREEN}Generando token JWT para Prometheus...${RESET}"
+	@bash -c 'source $(ENV_FILE) && \
+		NETWORK=$$(docker inspect acervo-minio -f "{{range \$$k, \$$v := .NetworkSettings.Networks}}{{println \$$k}}{{end}}" | head -1) && \
+		docker run --rm --network $$NETWORK --entrypoint sh minio/mc -c "\
+			mc alias set acervo http://acervo-minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY 2>/dev/null && \
+			mc admin prometheus generate acervo" 2>&1 | grep bearer_token | awk "{print \$$2}"'
+	@echo ""
+	@echo "${YELLOW}Copia el token en el .env de huachicol como ACERVO_MINIO_TOKEN${RESET}"
 
 firewall-setup:
 	@echo "${GREEN}Configurando firewall...${RESET}"
