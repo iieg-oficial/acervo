@@ -26,7 +26,8 @@ COMPOSE_CMD       := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 COMPOSE_CMD_INIT  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
 
 .PHONY: help up build down logs restart restart-nginx clean shell-minio shell-nginx setup certs \
-        init-buckets backup restore backup-list cron-install cron-remove firewall-setup prometheus-token
+        init-buckets backup restore backup-list cron-install cron-remove firewall-setup prometheus-token \
+        version-json
 
 help:
 	@echo ''
@@ -72,13 +73,18 @@ help:
 	@echo '  ${YELLOW}setup${RESET}             - Crea archivos .env iniciales'
 	@echo ''
 
-up:
+up: version-json
 	@echo "${GREEN}Iniciando entorno de $(MSG_ENV)...${RESET}"
 	$(COMPOSE_CMD) up -d
 
-build:
+build: version-json
 	@echo "${GREEN}Reconstruyendo entorno de $(MSG_ENV)...${RESET}"
 	$(COMPOSE_CMD) up -d --build
+
+version-json:
+	@VERSION=$$(cat VERSION); \
+	RELEASED_AT=$$(git log -1 --format=%cs 2>/dev/null || echo "unknown"); \
+	printf '{"version":"%s","service":"acervo","released_at":"%s"}\n' "$$VERSION" "$$RELEASED_AT" > nginx/version.json
 
 down:
 	@echo "${YELLOW}Deteniendo entorno de $(MSG_ENV)...${RESET}"

@@ -20,3 +20,5 @@ credentials/
 *.secret
 
 *.tar.gz
+
+nginx/version.json

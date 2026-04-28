@@ -10,6 +10,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d/acervo.conf:/etc/nginx/conf.d/acervo.conf:ro
+      - ./nginx/version.json:/etc/nginx/version.json:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
     environment:
       CONSOLE_ALLOWED_IPS: ${CONSOLE_ALLOWED_IPS:-}
