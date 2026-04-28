@@ -109,22 +109,34 @@ else
     BUCKETS="mapalab dateengine portal"
 fi
 
+MINIO_CONTAINER=""
+for candidate in acervo-minio acervo-minio-dev; do
+    if docker ps --format '{{.Names}}' | grep -qx "$candidate"; then
+        MINIO_CONTAINER="$candidate"
+        break
+    fi
+done
+
+if [ -z "$MINIO_CONTAINER" ]; then
+    echo "ERROR: No se encontró contenedor MinIO en ejecución (acervo-minio o acervo-minio-dev)"
+    exit 1
+fi
+
+MINIO_NETWORK=$(docker inspect "$MINIO_CONTAINER" -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
+
 for BUCKET in $BUCKETS; do
     if [ ! -d "${RESTORE_DIR}/${BUCKET}" ]; then
         echo "WARNING: Bucket $BUCKET not found in backup, skipping"
         continue
     fi
 
-    # Determinar dinámicamente la red del contenedor acervo-minio
-    MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
-
-    echo "Restoring bucket: $BUCKET"
+    echo "Restoring bucket: $BUCKET (target: $MINIO_CONTAINER)"
     docker run --rm \
         --network "${MINIO_NETWORK}" \
         -v "${RESTORE_DIR}:/restore:ro" \
         --entrypoint=/bin/sh \
         minio/mc -c "
-            mc alias set acervo http://acervo-minio:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
+            mc alias set acervo http://${MINIO_CONTAINER}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
             mc mb acervo/${BUCKET} --ignore-existing && \
             mc mirror /restore/${BUCKET} acervo/${BUCKET} --overwrite
         "
