@@ -11,6 +11,15 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.18.0] - 2026-04-28
+
+### Agregado
+- Endpoint `/ontoy` expuesto por Nginx que devuelve `version.json` con
+  `version`, `service` y `released_at` del servicio.
+- Regla `version-json` en el `Makefile` que regenera `nginx/version.json`
+  a partir del archivo `VERSION` y la fecha del ultimo commit; se ejecuta
+  automaticamente como dependencia de `up` y `build`.
+
 ## [1.17.0] - 2026-04-28
 
 ### Agregado
