@@ -11,6 +11,49 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.20.1] - 2026-04-29
+
+### Changed
+
+- **Bucket `mariachi` deja de estar en `PUBLIC_BUCKETS` por default**: ahora `portal mapalab iieg`. El bucket `mariachi` es privado, reservado para assets administrativos staff-only (logs descargables, exportaciones internas). Los avatars de usuarios NO viven en `mariachi`: viven en el bucket compartido `iieg/avatars/` para que sean reutilizables entre todos los frontends del ecosistema. La separacion responde al patron de privacidad: lo publico-publico va a buckets publicos, lo administrativo-staff a privados.
+
+### Notas migracion (al bajar 1.20.1 a la VM)
+
+Si ya corriste `init-buckets.sh` con 1.20.0 (que dejo `mariachi` con anonymous GetObject), tras hacer `git pull` corre:
+
+```bash
+docker exec acervo-minio mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+docker exec acervo-minio mc anonymous set none local/mariachi
+```
+
+O simplemente vuelve a correr el init (ya no aplica anonymous a `mariachi`):
+```bash
+docker compose --env-file .env.gateway -f docker-compose.gateway.yml --profile init run --rm acervo-init
+```
+
+---
+
+## [1.20.0] - 2026-04-29
+
+### Agregado
+
+- **Bucket compartido `iieg`** para assets institucionales (logos IIEG, escudos Jalisco, fuentes web, iconos, documentos como aviso de privacidad o terminos de uso). Publico (anonymous GetObject), con `iieg-user` como duenio. Estructura sugerida: `acervo/iieg/{logos,icons,fonts,docs,images}/`. Cualquier frontend del ecosistema lo consume desde `https://<dominio>/acervo/iieg/<path>`. Solo `tetlamamakani` (admin global) sube; un cambio en un asset compartido afecta a todos los frontends que lo usan, asi que conviene versionar paths (`/v1/logo.svg`, `/v2/logo.svg`) en lugar de sobreescribir.
+
+### Changed
+
+- **`scripts/init-buckets.sh`**: detecta el bucket viejo `sieej-diccionarios` y lo migra automaticamente a `sieej` (mc mirror + delete + remove user `sieej-diccionarios-user`). Mismo patron que el rename `dateengine -> dataengine` introducido en 1.19.0.
+- **`PUBLIC_BUCKETS`** default extendido a `portal mapalab mariachi iieg` (incluye el nuevo bucket institucional).
+- **`MINIO_BUCKETS`** en los `.env*.example` actualizado a `portal mapalab mariachi sieej dataengine iieg` (lista canonical del ecosistema).
+
+### Notas migracion (al bajar 1.20.0 a la VM)
+
+1. Edita `.env.gateway`: `MINIO_BUCKETS=portal mapalab mariachi sieej dataengine iieg`.
+2. Recreate del minio: `docker compose --env-file .env.gateway -f docker-compose.gateway.yml up -d --force-recreate minio`.
+3. Corre el init con `--rotate`: detecta `sieej-diccionarios` y lo migra; crea `iieg`; rota passwords de los demas. Capturar las 6 passwords que imprime.
+4. Pasar las 6 passwords al `mariachi/.env.production` (variables `ACERVO_<REF>_SECRET_KEY`). `ACERVO_IIEG_*` es nueva.
+
+---
+
 ## [1.19.0] - 2026-04-29
 
 ### Agregado

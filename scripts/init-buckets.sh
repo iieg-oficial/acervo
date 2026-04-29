@@ -4,7 +4,7 @@ set -e
 MINIO_HOST="${MINIO_INIT_ENDPOINT:-http://acervo-minio:9000}"
 ALIAS="acervo"
 ALL_BUCKETS="${MINIO_BUCKETS:?MINIO_BUCKETS is required}"
-PUBLIC_BUCKETS="${ACERVO_PUBLIC_BUCKETS:-portal mapalab mariachi}"
+PUBLIC_BUCKETS="${ACERVO_PUBLIC_BUCKETS:-portal mapalab iieg}"
 
 ROTATE=0
 TARGET=""
@@ -71,6 +71,7 @@ until mc alias set "$ALIAS" "$MINIO_HOST" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY
 done
 echo "MinIO connection established"
 
+# Migracion del bucket "dateengine" (typo historico) a "dataengine".
 if mc ls "${ALIAS}/dateengine" >/dev/null 2>&1; then
     echo "Detected legacy bucket 'dateengine' (typo). Migrating to 'dataengine'..."
     mc mb "${ALIAS}/dataengine" --ignore-existing
@@ -78,6 +79,16 @@ if mc ls "${ALIAS}/dateengine" >/dev/null 2>&1; then
     mc rb "${ALIAS}/dateengine" --force 2>/dev/null || true
     mc admin user remove "$ALIAS" "dateengine-user" 2>/dev/null || true
     echo "Migration complete: dateengine -> dataengine"
+fi
+
+# Migracion del bucket "sieej-diccionarios" a "sieej" (mas corto/claro).
+if mc ls "${ALIAS}/sieej-diccionarios" >/dev/null 2>&1; then
+    echo "Detected legacy bucket 'sieej-diccionarios'. Migrating to 'sieej'..."
+    mc mb "${ALIAS}/sieej" --ignore-existing
+    mc mirror --remove "${ALIAS}/sieej-diccionarios/" "${ALIAS}/sieej/" 2>&1 | tail -3 || true
+    mc rb "${ALIAS}/sieej-diccionarios" --force 2>/dev/null || true
+    mc admin user remove "$ALIAS" "sieej-diccionarios-user" 2>/dev/null || true
+    echo "Migration complete: sieej-diccionarios -> sieej"
 fi
 
 for BUCKET in $BUCKETS; do
