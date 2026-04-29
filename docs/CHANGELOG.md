@@ -11,6 +11,25 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.18.3] - 2026-04-29
+
+### Removido
+
+- **`MINIO_SERVER_URL` del `.env.gateway.example`** y del servicio `minio` en `docker-compose.gateway.yml`. La variable se mantenia con default vacio "por si acaso", pero en modo gateway con path prefix (`/acervo/`) **siempre debe estar vacia** (path prefix rompe sigv4 en la S3 API). Tener la variable en el example invitaba a setearla incorrectamente.
+- **`MINIO_SERVER_URL` del servicio `acervo-init`** en ambos compose files (`docker-compose.yml` y `docker-compose.gateway.yml`). El uso original sobrecargaba el nombre con dos semanticas distintas: la URL publica de S3 (sigv4) y el endpoint interno donde `mc` se conecta. Eran cosas distintas en una sola variable.
+
+### Changed
+
+- **`scripts/init-buckets.sh`** ahora usa `MINIO_INIT_ENDPOINT` con default `http://acervo-minio:9000` (alias DNS interno del container). El `mc` siempre se conecta por la red docker, no por internet, asi que no necesita resolver la URL publica. Si en el futuro alguien ejecuta el init desde fuera del compose (poco probable), puede pasar `MINIO_INIT_ENDPOINT=https://...` explicitamente.
+
+### Notas migracion
+
+Si un operador tiene `MINIO_SERVER_URL` seteado en su `.env.gateway` actual:
+- Para el servicio **`minio`** del modo gateway: ya no se lee. Vaciarla o quitarla.
+- Para el **modo standalone** (`docker-compose.yml`): la variable sigue usandose en el servicio `minio` (porque en standalone MinIO se sirve en la raiz del subdominio dedicado de acervo-nginx, sin path prefix, asi que sigv4 funciona). El init del modo standalone tampoco la usa ya.
+
+---
+
 ## [1.18.2] - 2026-04-29
 
 ### Corregido

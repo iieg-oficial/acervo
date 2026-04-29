@@ -88,7 +88,6 @@ services:
       - ./scripts/init-buckets.sh:/scripts/init-buckets.sh:ro
       - ./nginx/ssl/acervo.crt:/etc/ssl/certs/acervo.crt:ro
     environment:
-      MINIO_SERVER_URL: ${MINIO_SERVER_URL}
       MINIO_BUCKETS: ${MINIO_BUCKETS}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}

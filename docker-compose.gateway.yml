@@ -12,7 +12,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
-      MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
       MINIO_PROMETHEUS_AUTH_TYPE: ${MINIO_PROMETHEUS_AUTH_TYPE:-jwt}
     volumes:
       - minio_data:/data
@@ -43,7 +42,6 @@ services:
     volumes:
       - ./scripts/init-buckets.sh:/scripts/init-buckets.sh:ro
     environment:
-      MINIO_SERVER_URL: ${MINIO_SERVER_URL}
       MINIO_BUCKETS: ${MINIO_BUCKETS}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}

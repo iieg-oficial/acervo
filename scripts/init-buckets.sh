@@ -1,11 +1,10 @@
 #!/bin/sh
 set -e
 
-MINIO_HOST="${MINIO_SERVER_URL:?MINIO_SERVER_URL is required}"
+MINIO_HOST="${MINIO_INIT_ENDPOINT:-http://acervo-minio:9000}"
 ALIAS="acervo"
 ALL_BUCKETS="${MINIO_BUCKETS:?MINIO_BUCKETS is required}"
 
-# Si se pasa un argumento, solo inicializar ese bucket
 if [ -n "${1:-}" ]; then
     VALID=false
     for b in $ALL_BUCKETS; do
