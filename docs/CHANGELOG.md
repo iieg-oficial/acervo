@@ -11,6 +11,18 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.18.2] - 2026-04-29
+
+### Corregido
+
+- **`.env.gateway.example`**: corregida la guia de `MINIO_SERVER_URL`. El bump 1.18.1 sugirio `MINIO_SERVER_URL=https://YOUR_DOMAIN/acervo`, lo cual rompe el login del console con `401 Unauthorized` (MinIO valida internamente con sigv4 y no soporta path prefix en la S3 API: el browser firma con `/acervo/...` en el path canonical pero el upstream calcula la firma con `/...` porque el proxy strip-ea el prefijo, provocando `SignatureDoesNotMatch`). Ahora el example deja `MINIO_SERVER_URL=` vacio con un comentario explicando que solo se debe setear si la S3 API tiene un subdominio dedicado (sin path). `MINIO_BROWSER_REDIRECT_URL` se mantiene con prefix porque solo afecta a redirects del console, no participa en sigv4.
+
+### Notas
+
+- El setup historico de acervo (modo `INFRA=standalone` con `acervo-nginx` propio) servia la S3 API en la raiz del host y por eso funcionaba sin issues. Al migrar a modo `INFRA=gateway` bajo path prefix, hay que dejar `MINIO_SERVER_URL` vacio o usar subdominio dedicado.
+
+---
+
 ## [1.18.1] - 2026-04-29
 
 ### Corregido
