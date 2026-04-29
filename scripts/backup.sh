@@ -30,7 +30,7 @@ log() {
 
 log "Starting backup"
 
-BUCKETS="portal mapalab mariachi dataengine"
+BUCKETS="${MINIO_BUCKETS:?MINIO_BUCKETS is required}"
 
 for BUCKET in $BUCKETS; do
     log "Backing up bucket: $BUCKET"
