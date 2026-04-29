@@ -39,7 +39,7 @@ make down                 # Detener
 - **Hardening Docker**: `no-new-privileges`, `cap_drop: ALL`, filesystem read-only en nginx, límites de memoria/CPU
 - **Red interna**: MinIO no expone puertos al host, solo Nginx es público
 - **Firewall UFW**: `make firewall-setup` restringe puertos 80/443 a IPs de `ALLOWED_SERVER_IPS`
-- **Aislamiento por bucket**: cada sistema (mapalab, dateengine, portal) tiene su usuario y política IAM
+- **Aislamiento por bucket**: cada sistema (portal, mapalab, mariachi, dataengine) tiene su usuario y política IAM
 
 ## Respaldos
 

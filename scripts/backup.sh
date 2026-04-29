@@ -30,14 +30,13 @@ log() {
 
 log "Starting backup"
 
-BUCKETS="mapalab dateengine portal"
+BUCKETS="portal mapalab mariachi dataengine"
 
 for BUCKET in $BUCKETS; do
     log "Backing up bucket: $BUCKET"
     BUCKET_DIR="${MONTHLY_DIR}/${BUCKET}"
     mkdir -p "$BUCKET_DIR"
 
-    # Determinar dinámicamente la red del contenedor acervo-minio
     MINIO_NETWORK=$(docker inspect acervo-minio -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
     
     docker run --rm \

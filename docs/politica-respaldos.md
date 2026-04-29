@@ -13,7 +13,7 @@ Los respaldos están programados mediante Cron para ejecutarse automáticamente:
 ## Cómo se guardan
 Cada vez que se ejecuta el proceso:
 1. Se conecta interamente a MinIO.
-2. Descarga una copia exacta (modo espejo) de todos los buckets administrados (ej. `mapalab`, `dateengine`, `portal`).
+2. Descarga una copia exacta (modo espejo) de todos los buckets administrados (ej. `portal`, `mapalab`, `mariachi`, `dataengine`).
 3. Comprime todo en un único archivo de formato `.tar.gz` nombrado con la fecha de corte, por ejemplo: `backup-2026-04-01.tar.gz`.
 4. El archivo se guarda en el servidor dentro de la ruta especificada por la variable `BACKUP_DIR` de tu archivo `.env` (generalmente `/backups/acervo/monthly/`).
 

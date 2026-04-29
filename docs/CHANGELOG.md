@@ -11,6 +11,25 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.19.0] - 2026-04-29
+
+### Agregado
+- **Flag `--rotate`** en `scripts/init-buckets.sh`: si el user del bucket ya existe, sobreescribe su password con una nueva aleatoria de 32 chars y la imprime. Combinable con un nombre de bucket para rotar uno solo (`./init-buckets.sh --rotate portal`) o con todos (`./init-buckets.sh --rotate`). Antes el unico camino para "recuperar" una password perdida era borrar el user (lo cual borraba sus policies attached). El flag tambien sirve para rotacion periodica.
+- **Bucket `mariachi`** documentado en `.env.gateway.example` (`MINIO_BUCKETS=portal mapalab mariachi`). Mariachi gana su propio bucket para guardar sus assets propios (avatars de usuarios admin, imagenes que use el panel). Antes mariachi escribia con las creds root; ahora con `mariachi-user`. Bucket marcado publico (anonymous GetObject, igual patron que `portal` y `mapalab`).
+- **Variable `ACERVO_PUBLIC_BUCKETS`** en `init-buckets.sh` (default `portal mapalab mariachi`) para configurar que buckets reciben anonymous GetObject. Antes la lista estaba hardcoded.
+
+### Removido
+- **Bucket `dateengine` (con typo)** del `.env.gateway.example`: mariachi nunca lo usaba en runtime. Si hay datos en GCP en ese bucket, no se tocan; basta con removerlo del `MINIO_BUCKETS` para que el init no lo procese.
+
+### Notas migracion (cuando bajes 1.19.0 a la VM)
+
+1. Agregar `mariachi` al `MINIO_BUCKETS` y quitar `dateengine` (si esta) en `.env.gateway`.
+2. Correr `./scripts/init-buckets.sh --rotate` para rotar passwords de los buckets existentes y crear el nuevo `mariachi`. **Capturar las passwords que imprime** — solo se muestran una vez.
+3. Pasar las passwords a `mariachi/.env.production` (variables `ACERVO_PORTAL_*`, `ACERVO_MAPALAB_*`, `ACERVO_MARIACHI_*`, `ACERVO_SIEEJ_*`).
+4. Correr migracion de mariachi (>= v0.30.29) que agrega el proyecto/bucket en BD y desactiva `dateengine`.
+
+---
+
 ## [1.18.3] - 2026-04-29
 
 ### Removido

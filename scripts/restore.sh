@@ -106,7 +106,7 @@ tar -xzf "$ARCHIVE" -C "$RESTORE_DIR"
 if [ -n "$TARGET_BUCKET" ]; then
     BUCKETS="$TARGET_BUCKET"
 else
-    BUCKETS="mapalab dateengine portal"
+    BUCKETS="portal mapalab mariachi dataengine"
 fi
 
 MINIO_CONTAINER=""
