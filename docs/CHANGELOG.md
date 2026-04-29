@@ -11,6 +11,14 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.18.1] - 2026-04-29
+
+### Corregido
+
+- **`.env.gateway.example`**: actualizado el path de `MINIO_BROWSER_REDIRECT_URL` a `https://YOUR_DOMAIN/acervo/console` y `MINIO_SERVER_URL` a `https://YOUR_DOMAIN/acervo`. Antes decian `/console` y `/` respectivamente (legado de cuando acervo se exponia directamente en la raiz del dominio); el actual `gateway-hub` enruta acervo bajo `/acervo/console/`. Sin estos valores, MinIO genera URLs absolutas como `/static/...`, `/styles/...`, `/manifest.json`, que el browser pide con prefijo `/acervo/console/` (relativo al document) pero al llegar al upstream MinIO no las reconoce y devuelve `index.html` (SPA fallback). Resultado en el browser: `Refused to execute script ... MIME type ('text/html') is not executable`, `Refused to apply style ... MIME type ('text/html')` y `Manifest: Syntax error`. Comentario explicativo agregado al example.
+
+---
+
 ## [1.18.0] - 2026-04-28
 
 ### Agregado
