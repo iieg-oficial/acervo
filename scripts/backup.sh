@@ -43,7 +43,7 @@ for BUCKET in $BUCKETS; do
         --network "${MINIO_NETWORK}" \
         -v "${MONTHLY_DIR}:/backup" \
         --entrypoint=/bin/sh \
-        minio/mc -c "
+        pgsty/mc:RELEASE.2026-04-17T00-00-00Z -c "
             mc alias set acervo http://acervo-minio:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
             mc mirror acervo/${BUCKET} /backup/${BUCKET}
         " 2>&1 | tee -a "$LOG_FILE"

@@ -2,7 +2,7 @@ name: acervo
 
 services:
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio:RELEASE.2026-04-17T00-00-00Z
     container_name: acervo-minio
     command: server /data --console-address ":9001"
     ports:
@@ -36,7 +36,7 @@ services:
 
   acervo-init:
     profiles: ["init"]
-    image: minio/mc
+    image: pgsty/mc:RELEASE.2026-04-17T00-00-00Z
     container_name: acervo-init
     entrypoint: ["/bin/sh", "/scripts/init-buckets.sh"]
     volumes:

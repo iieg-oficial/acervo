@@ -135,7 +135,7 @@ for BUCKET in $BUCKETS; do
         --network "${MINIO_NETWORK}" \
         -v "${RESTORE_DIR}:/restore:ro" \
         --entrypoint=/bin/sh \
-        minio/mc -c "
+        pgsty/mc:RELEASE.2026-04-17T00-00-00Z -c "
             mc alias set acervo http://${MINIO_CONTAINER}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
             mc mb acervo/${BUCKET} --ignore-existing && \
             mc mirror /restore/${BUCKET} acervo/${BUCKET} --overwrite

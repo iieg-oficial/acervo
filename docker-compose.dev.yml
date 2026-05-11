@@ -2,7 +2,7 @@ name: acervo-dev
 
 services:
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio:RELEASE.2026-04-17T00-00-00Z
     container_name: acervo-minio-dev
     command: server /data --console-address ":9001"
     environment:

@@ -100,6 +100,24 @@ restart-nginx:
 	$(COMPOSE_CMD) up -d --force-recreate nginx
 
 clean:
+	@echo "${YELLOW}ADVERTENCIA: make clean borra TODOS los datos persistentes del entorno $(MSG_ENV).${RESET}"
+	@echo "${YELLOW}Esto eliminara:${RESET}"
+	@echo "  - Contenedores definidos en $(COMPOSE_FILE)"
+	@echo "  - Redes creadas por el stack"
+	@echo "  - Volumen minio_data (todos los buckets, objetos, users y policies)"
+	@if [ -f "$(ENV_FILE)" ]; then \
+		BUCKETS=$$(grep -E '^MINIO_BUCKETS=' "$(ENV_FILE)" | cut -d= -f2- | tr -d '"'); \
+		if [ -n "$$BUCKETS" ]; then \
+			echo ""; \
+			echo "${YELLOW}Buckets declarados en $(ENV_FILE):${RESET} $$BUCKETS"; \
+		fi; \
+	fi
+	@echo ""
+	@read -p "Escribe '$(ENV)' para confirmar el borrado: " CONFIRM; \
+		if [ "$$CONFIRM" != "$(ENV)" ]; then \
+			echo "${GREEN}Cancelado, no se borro nada.${RESET}"; \
+			exit 1; \
+		fi
 	@echo "${YELLOW}Limpiando entorno de $(MSG_ENV) (contenedores, redes y volúmenes)...${RESET}"
 	$(COMPOSE_CMD) down -v --remove-orphans
 
@@ -174,7 +192,7 @@ prometheus-token:
 	@echo "${GREEN}Generando token JWT para Prometheus...${RESET}"
 	@bash -c 'source $(ENV_FILE) && \
 		NETWORK=$$(docker inspect acervo-minio -f "{{range \$$k, \$$v := .NetworkSettings.Networks}}{{println \$$k}}{{end}}" | head -1) && \
-		docker run --rm --network $$NETWORK --entrypoint sh minio/mc -c "\
+		docker run --rm --network $$NETWORK --entrypoint sh pgsty/mc:RELEASE.2026-04-17T00-00-00Z -c "\
 			mc alias set acervo http://acervo-minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY 2>/dev/null && \
 			mc admin prometheus generate acervo" 2>&1 | grep bearer_token | awk "{print \$$2}"'
 	@echo ""

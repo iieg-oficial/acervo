@@ -11,6 +11,46 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.21.0] - 2026-05-11
+
+### Changed
+
+- **Migracion del namespace de imagen `minio/*` al fork comunitario `pgsty/*`** en los tres compose files (`docker-compose.yml`, `docker-compose.gateway.yml`, `docker-compose.dev.yml`), en `scripts/backup.sh`, `scripts/restore.sh` y en el target `prometheus-token` del `Makefile`. Tag pineado: `RELEASE.2026-04-17T00-00-00Z`. Antes los servicios usaban `minio/minio:latest` y `minio/mc` sin tag.
+
+### Added
+
+- **Variable `MINIO_BROWSER=off` en `.env.gateway.example`** con comentario explicativo. `pgsty/minio` restauro la consola embebida (que el upstream `minio/minio` removio en mayo de 2025); como el equipo de MV no filtra `/acervo/console/*` por IP en produccion, la consola se apaga via env var.
+
+### Contexto
+
+MinIO Inc. archivo el repo de la Community Edition en GitHub el 14-feb-2026 y el repo de imagenes Docker Hub a finales de abril de 2026. La ultima release upstream es `RELEASE.2025-10-15T17-29-55Z`, que incluye el fix de CVE-2025-62506 (privilege escalation, CVSS 8.1).
+
+El primer intento de bump (planeado como `1.20.2`) fue pinear esa version del namespace oficial. Al hacer `docker compose up` aparecio `manifest unknown`: la imagen oficial con el fix nunca llego a Docker Hub o fue retirada. El tag `minio/minio:latest` sigue accesible pero apunta a una imagen del 7-sep-2025, anterior al fix.
+
+Por eso el pivot al fork **`pgsty/minio`** mantenido por Pigsty:
+- Mismo binario MinIO CE (AGPLv3), con la consola restaurada.
+- Cadencia de releases mensuales (Dec 2025, Feb 2026, Mar 2026, Apr 2026).
+- Multi-arch (amd64 + arm64) y `mcli`/`mc` compatibles.
+- Repos APT/YUM disponibles en `pigsty.io` por si se requiere instalar el binario en host.
+- Disclaimer "no afiliado con MinIO Inc."; existe riesgo de que la marca registrada los obligue a renombrar.
+
+### Notas migracion
+
+1. `git pull` en la VM.
+2. Editar `.env.gateway` y agregar `MINIO_BROWSER=off` (apaga la consola embebida que pgsty restaura).
+3. `docker compose --env-file .env.gateway -f docker-compose.gateway.yml pull` para bajar las nuevas imagenes.
+4. `make build ENV=prod INFRA=gateway` para recrear el contenedor.
+5. Validar `curl https://iieg.jalisco.gob.mx/acervo/ontoy` -> debe responder `1.21.0`.
+6. Validar `curl -I https://iieg.jalisco.gob.mx/acervo/console/` -> debe responder 404 (consola apagada por `MINIO_BROWSER=off`).
+7. Validar que los clientes (portal, mapalab, mariachi, sieej, dataengine, iieg) sigan firmando OK contra la S3 API.
+
+### Pendiente
+
+- Mirror de `pgsty/minio:RELEASE.2026-04-17T00-00-00Z` y `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` a Artifact Registry para desacoplar del estado del fork en Docker Hub.
+- Decision estrategica entre quedarse en `pgsty/minio` (fork comunitario AGPL) o migrar a AIStor Free / SeaweedFS / Garage.
+
+---
+
 ## [1.20.1] - 2026-04-29
 
 ### Changed
