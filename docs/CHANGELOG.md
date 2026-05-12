@@ -11,6 +11,33 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.21.1] - 2026-05-12
+
+### Changed
+
+- **Rotacion completa de credenciales MinIO**: root (`MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`) y los 6 bucket-users (`portal-user`, `mapalab-user`, `mariachi-user`, `sieej-user`, `dataengine-user`, `iieg-user`). Las nuevas passwords viven en `.env.gateway` (gitignored).
+- **Rename `PORTALITO_*` -> `PORTAL_*`** en `.env.gateway` para alinear con el nombre real del bucket (`portal`) y del user MinIO (`portal-user`). El nombre `portalito` era un artefacto historico inconsistente.
+- **`MINIO_BROWSER_REDIRECT_URL`** fijado a `https://10.25.7.17/acervo/console` para que la consola embebida resuelva correctamente sus assets bajo el path-prefix del gateway (antes apuntaba a `http://localhost:9001` y rompia con 502 al servir CSS/JS por una URL distinta).
+- **Propagacion a consumidores**: nuevos secret keys aplicados a `/IIEG/mariachi/.env.production` (5 buckets) y `/IIEG/huachicol/.env` (huachicol-user). Limpieza de un secret residual en `.env.staging` y `.env.development` de mariachi para mantener consistencia (los demas slots ya estaban vacios).
+
+### Added
+
+- **`huachicol-user`** en MinIO con policy `diagnostics` (lectura del endpoint Prometheus de MinIO). Lo consume el stack de observabilidad de huachicol para hacer scraping de metricas via `ACERVO_MINIO_TOKEN` ya emitido.
+- **`ACERVO_PUBLIC_BUCKETS`** en `.env.gateway.example` para documentar la variable que controla que buckets reciben policy de anonymous `GetObject` (default: `portal mapalab iieg`).
+
+### Notas operativas
+
+Si se hace `git pull` en la VM, `.env.gateway` no cambia (gitignored). Los pasos de rotacion son:
+
+```bash
+docker exec acervo-minio mc admin user add local <bucket>-user <NEW_PWD>
+docker exec acervo-minio mc admin policy attach local policy-<bucket> --user <bucket>-user
+```
+
+O usando el script: `./scripts/init-buckets.sh --rotate <bucket>` (imprime la nueva pwd una sola vez). Tras rotar hay que actualizar el `.env` del consumer correspondiente y reiniciar su stack (`docker compose up -d --force-recreate <service>`).
+
+---
+
 ## [1.21.0] - 2026-05-11
 
 ### Changed
