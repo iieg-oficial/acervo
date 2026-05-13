@@ -12,7 +12,7 @@ services:
       - -s3.config=/etc/seaweedfs/identities.json
       - -s3.port=8333
       - -metricsPort=9091
-      - -ip=acervo-seaweedfs
+      - -ip.bind=0.0.0.0
     ports:
       - "${ACERVO_S3_PORT:-8333}:8333"
     environment:
@@ -22,7 +22,7 @@ services:
       - ./config:/etc/seaweedfs:ro
       - ./scripts/seaweedfs-entrypoint.sh:/seaweedfs-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://acervo-seaweedfs:9333/cluster/status | grep -q IsLeader"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status | grep -q IsLeader"]
       interval: 30s
       timeout: 20s
       retries: 3
