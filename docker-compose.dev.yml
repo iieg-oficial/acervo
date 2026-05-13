@@ -1,20 +1,29 @@
 name: acervo-dev
 
 services:
-  minio:
-    image: pgsty/minio:RELEASE.2026-04-17T00-00-00Z
-    container_name: acervo-minio-dev
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.23}
+    container_name: acervo-seaweedfs-dev
+    entrypoint: ["/bin/sh", "/seaweedfs-entrypoint.sh"]
+    command:
+      - -dir=/data
+      - -s3
+      - -s3.config=/etc/seaweedfs/identities.json
+      - -s3.port=8333
+      - -metricsPort=9091
+      - -ip=acervo-seaweedfs-dev
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${ACERVO_S3_PORT:-8333}:8333"
+      - "${ACERVO_FILER_PORT:-8888}:8888"
+      - "${ACERVO_METRICS_PORT:-9091}:9091"
+    environment:
+      WEED_LEVELDB2_ENABLED: "true"
     volumes:
-      - minio_data_dev:/data
+      - seaweedfs_data_dev:/data
+      - ./config:/etc/seaweedfs:ro
+      - ./scripts/seaweedfs-entrypoint.sh:/seaweedfs-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8333/status"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -22,8 +31,25 @@ services:
       - acervo_network_dev
     restart: unless-stopped
 
+  acervo-init:
+    profiles: ["init"]
+    image: alpine:3.20
+    container_name: acervo-init-dev
+    entrypoint: ["/bin/sh", "/scripts/init-seaweedfs.sh"]
+    volumes:
+      - ./scripts/init-seaweedfs.sh:/scripts/init-seaweedfs.sh:ro
+      - ./config:/etc/seaweedfs
+    environment:
+      ACERVO_BUCKETS: "${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
+      ACERVO_PUBLIC_BUCKETS: "${ACERVO_PUBLIC_BUCKETS:-portal mapalab iieg}"
+      ACERVO_ADMIN_ACCESS_KEY: "${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
+      ACERVO_ADMIN_SECRET_KEY: "${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
+      ROTATE_FLAG: "${ROTATE_FLAG:-0}"
+      TARGET_BUCKET: "${TARGET_BUCKET:-}"
+    restart: "no"
+
 volumes:
-  minio_data_dev:
+  seaweedfs_data_dev:
 
 networks:
   acervo_network_dev:

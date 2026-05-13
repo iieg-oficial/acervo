@@ -3,43 +3,35 @@ YELLOW := $(shell tput -Txterm setaf 3)
 WHITE  := $(shell tput -Txterm setaf 7)
 RESET  := $(shell tput -Txterm sgr0)
 
-ENV  ?= dev
-INFRA ?= standalone
+ENV ?= dev
 
 ifeq ($(ENV),prod)
-	ifeq ($(INFRA),gateway)
-		COMPOSE_FILE := docker-compose.gateway.yml
-		ENV_FILE     := .env.gateway
-		MSG_ENV      := Producción (gateway)
-	else
-		COMPOSE_FILE := docker-compose.yml
-		ENV_FILE     := .env
-		MSG_ENV      := Producción (standalone)
-	endif
+	COMPOSE_FILE := docker-compose.gateway.yml
+	ENV_FILE     := .env.gateway
+	MSG_ENV      := Producción (gateway)
 else
 	COMPOSE_FILE := docker-compose.dev.yml
 	ENV_FILE     := .env.development
 	MSG_ENV      := Desarrollo
 endif
 
-COMPOSE_CMD       := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
-COMPOSE_CMD_INIT  := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
+COMPOSE_CMD      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
+COMPOSE_CMD_INIT := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
 
-.PHONY: help up build down logs restart restart-nginx clean shell-minio shell-nginx setup certs \
-        init-buckets backup restore backup-list cron-install cron-remove firewall-setup prometheus-token \
-        version-json
+.PHONY: help up build down logs restart clean shell-seaweedfs setup init-seaweedfs \
+        rotate-seaweedfs migrate-from-minio backup restore backup-list cron-install \
+        cron-remove
 
 help:
 	@echo ''
 	@echo '${YELLOW}IIEG Acervo - Comandos disponibles${RESET}'
 	@echo ''
-	@echo 'Uso: ${YELLOW}make <comando> [ENV=dev|prod] [INFRA=standalone|gateway]${RESET}'
-	@echo '     (Por defecto ENV=dev, INFRA=standalone)'
+	@echo 'Uso: ${YELLOW}make <comando> [ENV=dev|prod]${RESET}'
+	@echo '     (Por defecto ENV=dev)'
 	@echo ''
 	@echo '${GREEN}Entornos disponibles:${RESET}'
-	@echo '  ${WHITE}ENV=dev${RESET}                          - Desarrollo local (MinIO directo)'
-	@echo '  ${WHITE}ENV=prod INFRA=standalone${RESET}        - Produccion con Nginx propio (SSL, rate limit, IP filter)'
-	@echo '  ${WHITE}ENV=prod INFRA=gateway${RESET}           - Produccion detras de gateway externo (sin Nginx)'
+	@echo '  ${WHITE}ENV=dev${RESET}                          - Desarrollo local (SeaweedFS expone puertos)'
+	@echo '  ${WHITE}ENV=prod${RESET}                         - Produccion detras de gateway externo'
 	@echo ''
 	@echo '${GREEN}Generales:${RESET}'
 	@echo '  ${YELLOW}up${RESET}                - Inicia el entorno en segundo plano'
@@ -47,44 +39,34 @@ help:
 	@echo '  ${YELLOW}down${RESET}              - Detiene todos los contenedores'
 	@echo '  ${YELLOW}logs${RESET}              - Muestra logs en tiempo real'
 	@echo '  ${YELLOW}restart${RESET}           - Reinicia el entorno'
-	@echo '  ${YELLOW}restart-nginx${RESET}     - Reinicia solo Nginx ${WHITE}(standalone)${RESET}'
 	@echo ''
-	@echo '${GREEN}Buckets y Datos:${RESET}'
-	@echo '  ${YELLOW}init-buckets${RESET}      - Crear buckets y usuarios ${WHITE}[BUCKET=nombre]${RESET}'
+	@echo '${GREEN}Identidades y Buckets:${RESET}'
+	@echo '  ${YELLOW}init-seaweedfs${RESET}    - Generar config/identities.json (passwords nuevas para users que no existen)'
+	@echo '  ${YELLOW}rotate-seaweedfs${RESET}  - Rotar TODAS las passwords ${WHITE}[BUCKET=nombre]${RESET}'
+	@echo ''
+	@echo '${GREEN}Datos:${RESET}'
 	@echo '  ${YELLOW}backup${RESET}            - Ejecutar respaldo manual'
 	@echo '  ${YELLOW}restore${RESET}           - Restaurar respaldo ${WHITE}(DATE=YYYY-MM-DD [BUCKET=nombre])${RESET}'
 	@echo '  ${YELLOW}backup-list${RESET}       - Listar respaldos disponibles'
-	@echo ''
-	@echo '${GREEN}Seguridad:${RESET}                        ${WHITE}(solo standalone)${RESET}'
-	@echo '  ${YELLOW}certs${RESET}             - Generar certificado SSL autofirmado'
-	@echo '  ${YELLOW}firewall-setup${RESET}    - Configurar UFW ${WHITE}(requiere root)${RESET}'
+	@echo '  ${YELLOW}migrate-from-minio${RESET} - One-shot: copiar datos de un volumen MinIO viejo a SeaweedFS'
 	@echo ''
 	@echo '${GREEN}Cron:${RESET}'
 	@echo '  ${YELLOW}cron-install${RESET}      - Instalar cron de respaldos (mensual, dia 1 a las 3:00 AM)'
 	@echo '  ${YELLOW}cron-remove${RESET}       - Desinstalar cron de respaldos'
 	@echo ''
-	@echo '${GREEN}Monitoreo:${RESET}'
-	@echo '  ${YELLOW}prometheus-token${RESET}  - Generar JWT para scraping de Prometheus'
-	@echo ''
 	@echo '${GREEN}Utilidades:${RESET}'
 	@echo '  ${YELLOW}clean${RESET}             - Elimina contenedores, redes y volumenes'
-	@echo '  ${YELLOW}shell-minio${RESET}       - Terminal del contenedor MinIO'
-	@echo '  ${YELLOW}shell-nginx${RESET}       - Terminal del contenedor Nginx ${WHITE}(standalone)${RESET}'
+	@echo '  ${YELLOW}shell-seaweedfs${RESET}   - Terminal del contenedor SeaweedFS'
 	@echo '  ${YELLOW}setup${RESET}             - Crea archivos .env iniciales'
 	@echo ''
 
-up: version-json
+up:
 	@echo "${GREEN}Iniciando entorno de $(MSG_ENV)...${RESET}"
 	$(COMPOSE_CMD) up -d
 
-build: version-json
+build:
 	@echo "${GREEN}Reconstruyendo entorno de $(MSG_ENV)...${RESET}"
 	$(COMPOSE_CMD) up -d --build
-
-version-json:
-	@VERSION=$$(cat VERSION); \
-	RELEASED_AT=$$(git log -1 --format=%cs 2>/dev/null || echo "unknown"); \
-	printf '{"version":"%s","service":"acervo","released_at":"%s"}\n' "$$VERSION" "$$RELEASED_AT" > nginx/version.json
 
 down:
 	@echo "${YELLOW}Deteniendo entorno de $(MSG_ENV)...${RESET}"
@@ -95,18 +77,14 @@ logs:
 
 restart: down up
 
-restart-nginx:
-	@echo "${GREEN}Reiniciando Nginx...${RESET}"
-	$(COMPOSE_CMD) up -d --force-recreate nginx
-
 clean:
 	@echo "${YELLOW}ADVERTENCIA: make clean borra TODOS los datos persistentes del entorno $(MSG_ENV).${RESET}"
 	@echo "${YELLOW}Esto eliminara:${RESET}"
 	@echo "  - Contenedores definidos en $(COMPOSE_FILE)"
 	@echo "  - Redes creadas por el stack"
-	@echo "  - Volumen minio_data (todos los buckets, objetos, users y policies)"
+	@echo "  - Volumen seaweedfs_data (todos los buckets, objetos y datos)"
 	@if [ -f "$(ENV_FILE)" ]; then \
-		BUCKETS=$$(grep -E '^MINIO_BUCKETS=' "$(ENV_FILE)" | cut -d= -f2- | tr -d '"'); \
+		BUCKETS=$$(grep -E '^ACERVO_BUCKETS=' "$(ENV_FILE)" | cut -d= -f2- | tr -d '"'); \
 		if [ -n "$$BUCKETS" ]; then \
 			echo ""; \
 			echo "${YELLOW}Buckets declarados en $(ENV_FILE):${RESET} $$BUCKETS"; \
@@ -121,11 +99,8 @@ clean:
 	@echo "${YELLOW}Limpiando entorno de $(MSG_ENV) (contenedores, redes y volúmenes)...${RESET}"
 	$(COMPOSE_CMD) down -v --remove-orphans
 
-shell-minio:
-	$(COMPOSE_CMD) exec minio /bin/sh
-
-shell-nginx:
-	$(COMPOSE_CMD) exec nginx /bin/sh
+shell-seaweedfs:
+	$(COMPOSE_CMD) exec seaweedfs /bin/sh
 
 setup:
 	@if [ ! -f .env.development ]; then \
@@ -134,12 +109,6 @@ setup:
 	else \
 		echo "${YELLOW}.env.development ya existe${RESET}"; \
 	fi
-	@if [ ! -f .env ]; then \
-		cp .env.example .env; \
-		echo "${GREEN}Creado .env desde ejemplo${RESET}"; \
-	else \
-		echo "${YELLOW}.env ya existe${RESET}"; \
-	fi
 	@if [ ! -f .env.gateway ]; then \
 		cp .env.gateway.example .env.gateway; \
 		echo "${GREEN}Creado .env.gateway desde ejemplo${RESET}"; \
@@ -147,21 +116,18 @@ setup:
 		echo "${YELLOW}.env.gateway ya existe${RESET}"; \
 	fi
 
-certs:
-	@echo "${GREEN}Generando certificado SSL autofirmado...${RESET}"
-	@mkdir -p nginx/ssl
-	@read -p "IP del servidor: " SERVER_IP; \
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-		-keyout nginx/ssl/acervo.key \
-		-out nginx/ssl/acervo.crt \
-		-subj "/C=MX/ST=Jalisco/L=Guadalajara/O=IIEG/CN=$$SERVER_IP" \
-		-addext "subjectAltName=IP:$$SERVER_IP" 2>/dev/null; \
-	chmod 644 nginx/ssl/acervo.key nginx/ssl/acervo.crt; \
-	echo "${GREEN}Certificado generado para IP: $$SERVER_IP${RESET}"
+init-seaweedfs:
+	@echo "${GREEN}Generando config/identities.json...${RESET}"
+	$(COMPOSE_CMD_INIT) run --rm acervo-init
 
-init-buckets:
-	@echo "${GREEN}Inicializando buckets y usuarios...${RESET}"
-	$(COMPOSE_CMD_INIT) run --rm acervo-init $(BUCKET)
+rotate-seaweedfs:
+	@echo "${YELLOW}Rotando passwords (BUCKET=$(BUCKET))...${RESET}"
+	$(COMPOSE_CMD_INIT) run --rm -e ROTATE_FLAG=1 -e TARGET_BUCKET=$(BUCKET) acervo-init
+
+migrate-from-minio:
+	@echo "${GREEN}Iniciando migracion one-shot desde volumen MinIO...${RESET}"
+	@echo "${YELLOW}Requiere variables MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en $(ENV_FILE).${RESET}"
+	@ENV_FILE=$(ENV_FILE) bash scripts/migrate-from-minio.sh
 
 backup:
 	@echo "${GREEN}Ejecutando respaldo manual...${RESET}"
@@ -187,17 +153,3 @@ cron-remove:
 	@echo "${YELLOW}Desinstalando cron de respaldos...${RESET}"
 	@crontab -r 2>/dev/null || true
 	@echo "${GREEN}Cron desinstalado${RESET}"
-
-prometheus-token:
-	@echo "${GREEN}Generando token JWT para Prometheus...${RESET}"
-	@bash -c 'source $(ENV_FILE) && \
-		NETWORK=$$(docker inspect acervo-minio -f "{{range \$$k, \$$v := .NetworkSettings.Networks}}{{println \$$k}}{{end}}" | head -1) && \
-		docker run --rm --network $$NETWORK --entrypoint sh pgsty/mc:RELEASE.2026-04-17T00-00-00Z -c "\
-			mc alias set acervo http://acervo-minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY 2>/dev/null && \
-			mc admin prometheus generate acervo" 2>&1 | grep bearer_token | awk "{print \$$2}"'
-	@echo ""
-	@echo "${YELLOW}Copia el token en el .env de huachicol como ACERVO_MINIO_TOKEN${RESET}"
-
-firewall-setup:
-	@echo "${GREEN}Configurando firewall...${RESET}"
-	@sudo bash scripts/firewall-setup.sh

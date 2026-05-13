@@ -1,61 +1,76 @@
 # Acervo
 
-Servicio de almacenamiento de archivos para IIEG basado en MinIO (compatible con S3).
+Servicio de almacenamiento de archivos para IIEG basado en SeaweedFS (compatible con la API S3).
 
 ## Requisitos
 
 - Docker y Docker Compose
-- UFW (para firewall en producción)
+- Red Docker externa `iieg-network` (gestionada por el repo `gateway-hub` en producción)
 
-## Configuración
+## Configuración inicial
 
 ```bash
 make setup
-# Editar .env con credenciales y IPs reales
-make certs
+# Editar .env.gateway (prod) o .env.development (dev) con credenciales reales
+make init-seaweedfs ENV=prod   # Genera config/identities.json (imprime nuevas creds por bucket)
 ```
 
 ## Uso
 
 ```bash
-make up ENV=prod          # Levantar producción
-make init-buckets         # Crear buckets y usuarios
-make logs                 # Ver logs
-make down                 # Detener
+make up ENV=prod        # Levantar produccion (modo gateway)
+make up                 # Levantar dev
+make logs               # Ver logs
+make down               # Detener
 ```
 
-## Acceso
+## Rotación de credenciales
 
-| Ambiente | API | Consola |
-|----------|-----|---------|
-| Dev | http://localhost:9000 | http://localhost:9001 |
-| Prod | https://SERVER_IP | https://SERVER_IP/console/ |
-
-## Seguridad
-
-- **HTTPS** con certificado autofirmado por IP (`make certs`)
-- **Consola restringida** por IP via `CONSOLE_ALLOWED_IPS` en `.env`
-- **Rate limiting**: API 50r/s, consola 5r/s
-- **Hardening Docker**: `no-new-privileges`, `cap_drop: ALL`, filesystem read-only en nginx, límites de memoria/CPU
-- **Red interna**: MinIO no expone puertos al host, solo Nginx es público
-- **Firewall UFW**: `make firewall-setup` restringe puertos 80/443 a IPs de `ALLOWED_SERVER_IPS`
-- **Aislamiento por bucket**: cada sistema (portal, mapalab, mariachi, dataengine) tiene su usuario y política IAM
+```bash
+make rotate-seaweedfs ENV=prod                    # Rotar todas
+make rotate-seaweedfs ENV=prod BUCKET=portal      # Rotar solo un bucket
+make restart ENV=prod                             # Aplicar la nueva config
+```
 
 ## Respaldos
 
 ```bash
-make backup               # Respaldo manual
-make restore DATE=2026-01-15          # Restaurar todos los buckets
-make restore DATE=2026-01-15 BUCKET=mapalab  # Restaurar un bucket
-make backup-list          # Listar respaldos
-make cron-install         # Cron diario a las 2:00 AM
-make cron-remove          # Desinstalar cron
+make backup ENV=prod                              # Respaldo manual
+make restore ENV=prod DATE=2026-05-13             # Restaurar todos los buckets
+make restore ENV=prod DATE=2026-05-13 BUCKET=portal  # Restaurar un bucket
+make backup-list ENV=prod                         # Listar respaldos
+make cron-install ENV=prod                        # Cron mensual a las 3:00 AM
+make cron-remove                                  # Desinstalar cron (cuidado: borra todo el crontab)
 ```
 
-Rotación: diarios (`BACKUP_RETENTION_DAYS`), semanales (`BACKUP_RETENTION_WEEKS`), mensuales (`BACKUP_RETENTION_MONTHS`).
+Rotación: `BACKUP_RETENTION_MONTHS` controla cuántos meses se conservan los tarballs (default 2).
+
+## Migración desde MinIO (one-shot)
+
+Si vienes de una versión anterior (1.21.x con MinIO):
+
+```bash
+# 1. Genera identidades y arranca SeaweedFS
+make init-seaweedfs ENV=prod
+make up ENV=prod
+
+# 2. Configura MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en .env.gateway (root del MinIO viejo)
+make migrate-from-minio ENV=prod
+```
+
+Detalles completos: `docs/CHANGELOG.md` (1.22.0).
+
+## Documentación
+
+| Archivo | Contenido |
+|--------|-----------|
+| `docs/context.md` | Contexto técnico completo: arquitectura, componentes, decisiones de diseño |
+| `docs/CHANGELOG.md` | Historial de cambios |
+| `docs/politica-respaldos.md` | Política operativa de respaldos |
+| `docs/creacion-buckets-consola.md` | Histórico (vigente para v1.21.x, no aplica a 1.22+) |
 
 ## Comandos
 
 ```bash
-make help                 # Ver todos los comandos disponibles
+make help    # Ver todos los comandos disponibles
 ```
