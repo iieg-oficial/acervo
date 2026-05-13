@@ -11,6 +11,107 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.22.0] - 2026-05-13
+
+### Cambios mayores
+
+- **Migracion de backend de storage**: el servicio Acervo deja de correr sobre MinIO (`pgsty/minio:RELEASE.2026-04-17T00-00-00Z`) y pasa a correr sobre **SeaweedFS** (`chrislusf/seaweedfs:4.23`). Motivacion: salud a largo plazo. MinIO Inc. archivo la Community Edition en feb-2026 y la imagen oficial con el fix de CVE-2025-62506 nunca llego a Docker Hub. El fork comunitario `pgsty/minio` (1.21.0) compro continuidad de corto plazo pero depende de un mono-mantenedor con riesgo de marca registrada. SeaweedFS gana en gobernanza (Apache 2.0, 14 anios de historia, empresa Seaweed Data + Patreon + comunidad ~30k estrellas).
+- **Eliminacion de los modos `INFRA=standalone` y `ENV=dev`**: el servicio ahora opera *exclusivamente* detras de `gateway-hub` y con un solo set de archivos de configuracion. Se retiran:
+  - Modo standalone (Nginx propio + UFW + cert autofirmado): borrados `docker-compose.yml` (viejo), todo el directorio `nginx/`, `scripts/firewall-setup.sh`, `scripts/nginx-entrypoint.sh`. El Makefile pierde la variable `INFRA` y los targets `certs`, `firewall-setup`, `restart-nginx`, `shell-nginx`, `prometheus-token`, `version-json`.
+  - Modo dev: borrados `docker-compose.dev.yml` y `.env.development.example`. El Makefile pierde la variable `ENV` (siempre usa el modo gateway).
+  - Renombre para reflejar el unico modo: `docker-compose.gateway.yml` → `docker-compose.yml`, `.env.gateway` → `.env`, `.env.gateway.example` → `.env.example`.
+- **Endpoint `/ontoy`**: deja de servirlo Acervo (lo serviar el Nginx interno del modo standalone, que se elimino). El gateway-hub tiene su propio endpoint de version. Si monitoreo lo necesita, se puede agregar un sidecar `nginx:alpine` minimalista en un bump posterior.
+- **Init de buckets**: `scripts/init-buckets.sh` (basado en `mc admin user add` / `mc admin policy`) se reemplaza por `scripts/init-seaweedfs.sh` que genera `config/identities.json` con la sintaxis nativa de SeaweedFS (`identities[].credentials[]` + `actions: ["Admin:bucket", "Read:bucket", ...]`). Se preserva el flujo `--rotate` y la posibilidad de rotar un solo bucket.
+
+### Variables de entorno renombradas / removidas
+
+| Anterior | Nuevo | Notas |
+|---------|------|-------|
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `ACERVO_ADMIN_ACCESS_KEY` / `ACERVO_ADMIN_SECRET_KEY` | Credenciales del identity `admin` en SeaweedFS. |
+| `MINIO_BUCKETS` | `ACERVO_BUCKETS` | Conceptualmente nuestro, no de MinIO. |
+| `MINIO_API_PORT` | `ACERVO_S3_PORT` | Default 8333 (puerto S3 default de SeaweedFS). |
+| `MINIO_CONSOLE_PORT` | (removido) | SeaweedFS no tiene consola tipo MinIO Browser. |
+| `MINIO_BROWSER_REDIRECT_URL`, `MINIO_BROWSER` | (removidos) | N/A. |
+| `MINIO_PROMETHEUS_AUTH_TYPE` | (removido) | SeaweedFS expone `/metrics` sin auth en puerto separado (`-metricsPort=9091`). |
+| `MINIO_SERVER_URL` | (removido) | SeaweedFS no requiere config equivalente; sigv4 funciona contra el endpoint local. |
+| `MINIO_INIT_ENDPOINT` | (removido) | El init ya no se conecta al servidor S3, escribe directamente a `config/identities.json`. |
+
+### Contenedores renombrados
+
+| Anterior | Nuevo |
+|---------|------|
+| `acervo-minio` | `acervo-seaweedfs` |
+| `acervo-init` | `acervo-init` (mismo nombre, imagen distinta: `alpine:3.20`) |
+
+### Targets del Makefile
+
+| Anterior | Nuevo |
+|---------|------|
+| `make init-buckets` | `make init-seaweedfs` (y `make rotate-seaweedfs [BUCKET=...]` para rotar) |
+| `make shell-minio` | `make shell-seaweedfs` |
+| (nuevo) | `make migrate-from-minio` — one-shot que copia datos del volumen `acervo_minio_data` viejo a SeaweedFS |
+| `make prometheus-token` | (removido) |
+| `make certs`, `firewall-setup`, `restart-nginx`, `shell-nginx`, `version-json` | (removidos, ya no aplican) |
+
+### Pasos para deploy en la VM (production)
+
+1. **Snapshot de seguridad** (red de salvataje principal):
+   ```bash
+   cd /home/egar/IIEG/acervo
+   git checkout production
+   ENV_FILE=.env.gateway bash scripts/backup.sh   # mientras MinIO aun esta vivo, genera tar.gz en /backups/acervo/monthly
+   ```
+2. **Pull y bump** del repo a 1.22.0:
+   ```bash
+   git pull
+   git checkout v1.22.0   # cuando este taggeado
+   ```
+3. **Renombrar el `.env` existente** y agregar nuevas variables:
+   ```bash
+   mv .env.gateway .env       # el archivo runtime ahora se llama .env
+   # editar .env para agregar ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY, renombrar MINIO_BUCKETS -> ACERVO_BUCKETS, etc.
+   # comparar contra .env.example para los nombres canonicos
+   ```
+4. **Migracion one-shot**:
+   ```bash
+   # 4.1 Generar identities.json (imprime nuevas creds por bucket) y arrancar SeaweedFS
+   make init-seaweedfs
+   make up
+   
+   # 4.2 Setear MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en .env (las viejas del MinIO root)
+   make migrate-from-minio   # mc mirror del volumen viejo a SeaweedFS, valida conteos
+   ```
+5. **Flip del gateway-hub**: en `/home/egar/IIEG/gateway-hub/.env.production`, cambiar:
+   ```
+   ACERVO_HOST=acervo-seaweedfs:8333    # antes: acervo-minio:9000
+   ```
+   Quitar `ACERVO_CONSOLE_HOST` (no aplica). Recargar Nginx: `cd /home/egar/IIEG/gateway-hub && docker compose up -d nginx`.
+6. **Propagar credenciales nuevas a los 6 consumidores** (`mariachi`, `huachicol`, `mapalab`, `sieej`, `dataengine`, `portal`) editando su `.env.production`. El access key string sigue siendo `<bucket>-user` para no romper memoria muscular, pero el secret cambia.
+7. **Smoke tests** publicos:
+   ```bash
+   curl -I https://iieg.jalisco.gob.mx/acervo/iieg/...   # anonymous GET
+   ```
+   Y privados desde cada cliente.
+8. **Apagar MinIO**: cuando todos los smoke tests pasen, `docker stop acervo-minio && docker rm acervo-minio`. El volumen `acervo_minio_data` queda en disco como red de salvataje secundaria. Borrar con `docker volume rm acervo_minio_data` despues de 24-72h estables.
+
+### Rollback
+
+- Si la migracion falla antes del flip del gateway: nada se rompio. SeaweedFS solo absorbio una copia de los datos; MinIO sigue activo.
+- Si rompe despues del flip: `git checkout v1.21.2` en acervo, `mv .env .env.gateway`, revertir el `ACERVO_HOST` del gateway, recrear el contenedor `acervo-minio` desde el volumen `acervo_minio_data` (sigue existiendo). Si el volumen ya se borro: `bash scripts/restore.sh YYYY-MM-DD` desde el tar.gz del paso 1.
+
+### Notas tecnicas
+
+- **Modelo de identidades en SeaweedFS**: una sola lista `identities[]` en `config/identities.json` reemplaza el modelo MinIO de (users + policies + anonymous-policy separados). Cada identity tiene `name`, `credentials[]` (accessKey/secretKey) y `actions` con scope per-bucket (`Admin:portal`, `Read:portal`, etc.). El identity sin `credentials` con nombre `anonymous` habilita anonymous GET.
+- **Default cerrado**: SeaweedFS arranca abierto si no se le pasa `-s3.config`. El entrypoint custom `scripts/seaweedfs-entrypoint.sh` aborta el arranque si `config/identities.json` no existe o esta vacio, evitando deploys accidentales sin auth.
+- **Metricas Prometheus**: ya no requieren JWT (`prometheus-token` retirado). El scrape de huachicol pasa de `http://acervo-minio:9000/minio/v2/metrics/...` con bearer a `http://acervo-seaweedfs:9091/metrics` sin auth.
+- **El usuario `huachicol-user`** de MinIO se retira: en SeaweedFS el endpoint de metricas es publico-en-red-interna y no requiere credenciales S3.
+
+### Pendientes
+
+- Mirror de `chrislusf/seaweedfs:4.23` a Artifact Registry (replica del mismo proceso que se planeo para `pgsty/minio`).
+- Decidir si reintroducir un sidecar `nginx:alpine` minimo para servir `/ontoy` o si se reescribe el monitoreo de version para consultar `git describe` en la VM directamente.
+- Validar comportamiento de SeaweedFS bajo carga real de MapaLab + Portal.
+
 ## [1.21.2] - 2026-05-13
 
 ### Changed

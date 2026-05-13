@@ -2,11 +2,13 @@
 
 Documento de referencia completo del servicio. Está pensado para que cualquier persona (o LLM) que entre al repo entienda la intención del diseño, los puntos donde se han pisado callos y las invariantes que hay que respetar al modificar.
 
+> Última reescritura mayor: 2026-05-13 (migración de MinIO → SeaweedFS, eliminación de modo standalone).
+
 ---
 
 ## 1. Propósito y rol en el ecosistema
 
-**Acervo** es el servicio de almacenamiento de objetos del IIEG, montado sobre [MinIO](https://min.io) (compatible con la API S3 de AWS). Es la capa de "blobs" para todos los frontends y backends del ecosistema institucional:
+**Acervo** es el servicio de almacenamiento de objetos del IIEG, montado sobre [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (compatible con la API S3 de AWS). Es la capa de "blobs" para todos los frontends y backends del ecosistema institucional:
 
 | Sistema | Bucket | Tipo | Lo que guarda |
 |--------|--------|------|---------------|
@@ -19,155 +21,86 @@ Documento de referencia completo del servicio. Está pensado para que cualquier 
 
 `iieg` actúa como **bucket compartido**: cualquier frontend lo consume desde la misma ruta pública. Por eso conviene versionar paths (`/v1/logo.svg`, `/v2/logo.svg`) en lugar de sobrescribir — un cambio impacta a todos los frontends.
 
-Cada bucket tiene su propio usuario IAM (`<bucket>-user`) y una policy que solo le da acceso a su propio bucket. La cuenta root se usa exclusivamente para administración / consola; los servicios consumen MinIO con sus credenciales scoped.
+Cada bucket tiene su propio identity (`<bucket>-user`) en SeaweedFS con `actions` scoped al bucket correspondiente (`Admin:portal`, `Read:portal`, `Write:portal`, etc.). La cuenta `admin` se usa exclusivamente para administración (backup, restore, migración); los servicios consumen Acervo con sus credenciales scoped.
 
 ---
 
-## 2. Modos de despliegue
+## 2. Modo de despliegue
 
-El `Makefile` selecciona compose file y `.env` con dos variables:
+Único modo: producción detrás de gateway externo.
 
-```
-ENV   = dev | prod          (default: dev)
-INFRA = standalone | gateway (default: standalone)
-```
-
-### 2.1 `ENV=dev` — desarrollo local
-- Archivo: `docker-compose.dev.yml`
-- `.env`: `.env.development`
-- Levanta solo MinIO, expone `9000` (API) y `9001` (consola) al host directamente.
-- Sin Nginx, sin SSL, sin filtros de IP.
-
-### 2.2 `ENV=prod INFRA=standalone` — producción con Nginx propio
 - Archivo: `docker-compose.yml`
-- `.env`: `.env`
-- Lleva Nginx + MinIO. Solo Nginx expone puertos (80/443). MinIO vive en una red `internal: true`, **no es accesible desde el host**.
-- Se usa cuando el dominio (p.ej. `s3.jalisco.gob.mx`) apunta directo a esta MV.
+- `.env`: `.env` (gitignored, ver `.env.example` para plantilla)
+- SeaweedFS se publica en una red externa `iieg-network` (declarada como `external: true`) y un gateway compartido (`gateway-hub`) enruta `/acervo/*` hacia este contenedor.
+- Dominio: `iieg.jalisco.gob.mx/acervo/`.
 
-### 2.3 `ENV=prod INFRA=gateway` — producción detrás de gateway externo
-- Archivo: `docker-compose.gateway.yml`
-- `.env`: `.env.gateway`
-- No incluye Nginx. MinIO se publica en una red externa `iieg-network` (declarada como `external: true`) y un gateway compartido (`gateway-hub`) enruta `/acervo/*` hacia este contenedor.
-- Es el modo que se está usando en producción real hoy (rama `production`, dominio `iieg.jalisco.gob.mx/acervo/`).
-
-> **Selección de modo en el comando**:
-> ```
-> make up                                  # dev
-> make up ENV=prod                         # standalone
-> make up ENV=prod INFRA=gateway           # gateway
-> ```
+> **Histórico**:
+> - Existió un modo `INFRA=standalone` con Nginx propio + UFW + cert autofirmado (versiones 1.0.0 – 1.21.2). Retirado en 1.22.0 porque desde 1.18.x toda producción real corría en modo gateway.
+> - Existió un modo `ENV=dev` con `docker-compose.dev.yml` + `.env.development` para desarrollo local. Retirado en 1.22.0 (mismo bump) porque en la práctica todo el desarrollo se hace contra GCP staging del ecosistema; mantener un compose dev separado solo agregaba ruido.
 
 ---
 
-## 3. Arquitectura (modo standalone)
-
-```mermaid
-flowchart TD
-    internet([Internet])
-    ufw[/UFW firewall<br/>SSH + 80/443 desde ALLOWED_SERVER_IPS/]
-    nginx["acervo-nginx<br/>(red pública + interna)"]
-    minio["acervo-minio<br/>API 9000 / Console 9001<br/>(solo red interna)"]
-    init["acervo-init (profile 'init')<br/>pgsty/mc"]
-
-    internet --> ufw --> nginx
-    nginx -- /console/ + /console/static/ --> minio
-    nginx -- /  rate-limit api --> minio
-    nginx -- /ontoy alias version.json --> nginx
-    init -. setup buckets / users .-> minio
-
-    classDef int fill:#eef,stroke:#88a
-    class minio,init int
-```
-
-**Redes Docker**:
-- `acervo_internal` — `internal: true`. MinIO y la corrida de init solo viven aquí.
-- `acervo_public` — solo Nginx tiene una pata en ambas. Es el único puente entre internet y MinIO.
-
-Esto es defensa en profundidad: incluso si alguien evade UFW, MinIO no tiene puertos publicados al host.
-
----
-
-## 4. Arquitectura (modo gateway)
+## 3. Arquitectura
 
 ```mermaid
 flowchart LR
     gw["gateway-hub<br/>(otro repo, otra red)"]
     iiegnet[("iieg-network<br/>(external)")]
-    minio["acervo-minio<br/>9000 / 9001"]
-    init["acervo-init"]
+    seaweed["acervo-seaweedfs<br/>S3 :8333 / metrics :9091"]
+    init["acervo-init (profile 'init')<br/>alpine + jq"]
+    prom["prometheus<br/>(huachicol)"]
 
-    gw -- /acervo/* --> iiegnet --> minio
-    init -. setup .-> minio
+    gw -- /acervo/* --> iiegnet --> seaweed
+    init -. genera config/identities.json .-> seaweed
+    prom -- scrape :9091/metrics --> seaweed
 ```
 
-**Diferencias clave vs standalone**:
-- Sin Nginx propio.
-- MinIO sí publica puertos (`MINIO_API_PORT`, `MINIO_CONSOLE_PORT`) — por eso el gateway debe filtrar/protegerlos al exterior.
-- Sin filtros de IP de consola: eso es responsabilidad del gateway upstream.
-- `MINIO_SERVER_URL` se deja **vacío** (ver §6.3, sigv4).
+**Diferencias clave vs MinIO**:
+- SeaweedFS no tiene consola embebida tipo "MinIO Browser". Admin se hace via S3 API (mc, rclone) o via `weed shell` desde dentro del contenedor.
+- El endpoint de métricas Prometheus es **público en red interna** sin auth (puerto `9091`), separado del puerto de la S3 API.
+- Las identidades no son "users + policies + anonymous separados". Son una lista única en `config/identities.json` con un identity por consumidor.
+- `MINIO_SERVER_URL` y `MINIO_BROWSER_REDIRECT_URL` no aplican. SeaweedFS no requiere config de URL pública para que sigv4 funcione.
 
 ---
 
-## 5. Componentes
+## 4. Componentes
 
-### 5.1 MinIO (`acervo-minio`)
-- Imagen: `pgsty/minio:RELEASE.2026-04-17T00-00-00Z` (fork comunitario mantenido por Pigsty; ver §10 "Deudas" para el contexto de migración desde `minio/minio`).
-- Comando: `server /data --console-address ":9001"`.
-- Volumen persistente: `minio_data` (Docker volume).
-- `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` vienen de `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` del `.env`.
-- En standalone monta el cert autofirmado en `/root/.minio/certs/CAs/acervo.crt` para que `mc` confíe en sí mismo si alguien dispara comandos internos.
-- Healthcheck: `curl /minio/health/live` cada 30s.
-- Hardening: `no-new-privileges`, `cap_drop: ALL`. En gateway expone `MINIO_PROMETHEUS_AUTH_TYPE`.
+### 4.1 SeaweedFS (`acervo-seaweedfs`)
+- Imagen: `chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.23}`. Latest stable a may-2026.
+- Comando: `weed server -dir=/data -s3 -s3.config=/etc/seaweedfs/identities.json -s3.port=8333 -metricsPort=9091 -ip=acervo-seaweedfs`. All-in-one mode (master + volume + filer + s3 en un solo proceso).
+- Volumen persistente: `seaweedfs_data` (Docker volume).
+- Bind mount: `./config:/etc/seaweedfs:ro` — donde vive `identities.json` (generado por init, gitignored).
+- Entrypoint custom: `scripts/seaweedfs-entrypoint.sh` aborta el arranque si `identities.json` no existe o está vacío (evita un deploy accidental sin auth, ver §5.2).
+- Healthcheck: `wget --spider http://localhost:8333/status` cada 30s.
+- Hardening: `no-new-privileges:true`, `cap_drop: ALL`.
+- Puertos publicados al host: solo `${ACERVO_S3_PORT:-8333}:8333`. Las métricas se consumen por DNS interno desde la red `iieg-network`.
 
-### 5.2 Nginx (`acervo-nginx`, solo standalone)
-- `nginx:alpine`.
-- Configuración:
-  - `nginx/nginx.conf` (montado RO).
-  - `nginx/conf.d/acervo.conf` (montado RO). Servidor único, escucha 80 y 443.
-  - `nginx/conf.d/dynamic/{trusted_proxies.conf, allowed_ips.conf}` — generadas en runtime por el entrypoint.
-- Certs SSL en `nginx/ssl/acervo.{crt,key}` (autofirmados, generados por `make certs` para una IP del servidor).
-- Hardening fuerte: `read_only: true`, `cap_drop: ALL`, capabilities mínimas (`NET_BIND_SERVICE`, `CHOWN`, `SETUID`, `SETGID`, `DAC_OVERRIDE`), tmpfs para `/tmp`, `/var/cache/nginx`, `/var/run` y `/etc/nginx/conf.d/dynamic`.
-- Tres `location`:
-  - `/` — proxy a MinIO API, rate-limit `api` (50r/s, burst 100).
-  - `/console/` — proxy a la consola con rate-limit `console` (30r/s, burst 1000), CSP custom (acepta `unsafe-inline`, `unsafe-eval` y `https://unpkg.com` porque la consola los necesita), filtrado por IP via `include allowed_ips.conf; deny all;`.
-  - `/console/static/` — mismo filtrado de IP, sin rate-limit estricto.
-  - `/ontoy` — alias a `/etc/nginx/version.json` (endpoint de versión, ver §8).
-- Headers de seguridad globales: HSTS (1 año, includeSubDomains), X-Frame-Options SAMEORIGIN, X-Content-Type-Options nosniff, X-XSS-Protection, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy negando geo/mic/cam, X-Request-ID.
-- `client_max_body_size 1G`. `proxy_buffering off` y `proxy_request_buffering off` para streaming de uploads/downloads grandes sin que Nginx los bufferee a disco.
+### 4.2 Init de identidades (`scripts/init-seaweedfs.sh`, perfil `init`)
+- Imagen: `alpine:3.20`. Profile `init` para que no levante automáticamente con `up`.
+- Hace `apk add --no-cache jq openssl` en runtime.
+- Para cada bucket en `ACERVO_BUCKETS`:
+  - Crea o preserva el identity `<bucket>-user` con `accessKey == name`, `secretKey` aleatorio de 32 chars.
+  - Si el user ya existe en `identities.json`, se preserva su `secretKey` (no se rota a menos que se pase `ROTATE_FLAG=1`).
+  - Asigna `actions: ["Admin:<bucket>", "Read:<bucket>", "Write:<bucket>", "List:<bucket>", "Tagging:<bucket>"]` (scope estricto al bucket).
+- Crea el identity `admin` con las credenciales de `ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY` y `actions: ["Admin", "Read", "Write", "List", "Tagging"]` (sin scope = todos los buckets).
+- Si `ACERVO_PUBLIC_BUCKETS` tiene valor, crea el identity `anonymous` (sin credenciales) con `actions: ["Read:portal", "Read:mapalab", "Read:iieg"]` (o el subset definido).
+- Flag `ROTATE_FLAG=1`: aunque el user exista, regenera password y la imprime. Combinable con `TARGET_BUCKET=portal` para rotar solo uno.
+- Passwords se imprimen solo cuando se generan. Si se pierden, el único camino es rotación.
+- Tras correr el init, **hay que reiniciar SeaweedFS** (`make restart`) para que cargue el `identities.json` actualizado. SeaweedFS lee el archivo al startup, no en caliente.
 
-### 5.3 Entrypoint dinámico de Nginx (`scripts/nginx-entrypoint.sh`)
-Se monta como `config` y corre antes de `nginx -g daemon off`. Lee dos variables y genera los fragmentos `conf.d/dynamic/*`:
+### 4.3 Migración one-shot desde MinIO (`scripts/migrate-from-minio.sh`)
+- Script de migración única, se conserva en el repo para fines de auditoría aunque solo se corra una vez.
+- Detecta el volumen Docker `acervo_minio_data` (sobrevivido del bump 1.21.x).
+- Levanta un contenedor `pgsty/minio` efímero contra ese volumen, lo conecta a la red de SeaweedFS, corre `mc mirror` por bucket.
+- Verifica conteo de objetos en ambos lados al final.
+- Variables requeridas: `MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY` (las viejas, root de MinIO). El admin de destino lo toma de `ACERVO_ADMIN_*`.
+- **No es idempotente respecto a deltas concurrentes**: si MinIO sigue recibiendo escrituras durante la corrida, esos objetos pueden quedar fuera. Recomendado parar consumidores que escriben (`mariachi`, `dataengine`) antes de correr.
 
-- `TRUSTED_PROXIES` (CIDR separados por coma) → `trusted_proxies.conf` con `set_real_ip_from` por cada CIDR + `real_ip_header X-Real-IP` + `real_ip_recursive on`.
-- `CONSOLE_ALLOWED_IPS` (CIDR/IP separados por coma) → `allowed_ips.conf` con `allow <ip>;` por línea. Si no se setea, `allow all;` y warning en el log.
-
-> **Implicación**: cambiar IPs permitidas requiere `make restart-nginx` (no reload), porque el entrypoint solo corre en el arranque.
-
-### 5.4 Init de buckets (`scripts/init-buckets.sh`, perfil `init`)
-- Imagen: `pgsty/mc:RELEASE.2026-04-17T00-00-00Z`. Profile `init` para que no levante automáticamente con `up`.
-- Espera a MinIO (`mc alias set` en loop hasta que responda).
-- **Migraciones automáticas**:
-  - `dateengine` (typo histórico) → `dataengine`: `mc mirror --remove` + remove user `dateengine-user`.
-  - `sieej-diccionarios` → `sieej`: mismo patrón.
-- Para cada bucket en `MINIO_BUCKETS`:
-  - `mc mb --ignore-existing`.
-  - Crea policy `policy-<bucket>` con scope `arn:aws:s3:::<bucket>` y `<bucket>/*`.
-  - Crea user `<bucket>-user` con password aleatoria de 32 chars **solo si no existe**. Si existe, no la toca (a menos que `--rotate`).
-  - Attach policy al user.
-  - Si el bucket está en `ACERVO_PUBLIC_BUCKETS` (default `portal mapalab iieg`), aplica `anonymous set-json` con `s3:GetObject` para anónimos.
-- Flag `--rotate`: aunque el user exista, regenera password y la imprime. Combinable con un bucket específico:
-  ```bash
-  ./init-buckets.sh --rotate            # rota todos
-  ./init-buckets.sh --rotate portal     # rota solo portal-user
-  ./init-buckets.sh mariachi            # crea/idempotente solo mariachi
-  ```
-- Passwords solo se imprimen una vez. Si se pierden, el único camino es `--rotate`.
-
-### 5.5 Backup (`scripts/backup.sh`)
-- Frecuencia: mensual (cron) — ver §7.
-- Para cada bucket en `MINIO_BUCKETS`:
-  - Detecta la red de `acervo-minio` con `docker inspect`.
-  - Corre un contenedor temporal `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` en esa red, monta `${MONTHLY_DIR}` y hace `mc mirror acervo/<bucket> /backup/<bucket>`.
+### 4.4 Backup (`scripts/backup.sh`)
+- Frecuencia: mensual (cron) — ver §6.
+- Para cada bucket en `ACERVO_BUCKETS`:
+  - Detecta la red de `acervo-seaweedfs` con `docker inspect`.
+  - Corre un contenedor temporal `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` en esa red (mc sigue funcionando contra SeaweedFS porque ambos hablan S3), monta `${MONTHLY_DIR}` y hace `mc mirror acervo/<bucket> /backup/<bucket>`.
 - Comprime todo el directorio `monthly/<DATE>/` en `monthly/backup-<DATE>.tar.gz`.
 - **Limpieza del directorio temporal**: usa un contenedor `alpine find -delete` (en lugar de `rm -rf` desde host) — el contenido pertenece al usuario root del contenedor de `mc`, no al usuario host.
 - Rotación:
@@ -175,72 +108,51 @@ Se monta como `config` y corre antes de `nginx -g daemon off`. Lee dos variables
   - logs > 90 días → borrados.
 - Logs en `${BACKUP_DIR}/logs/backup-<TIMESTAMP>.log`.
 
-### 5.6 Restore (`scripts/restore.sh`)
+### 4.5 Restore (`scripts/restore.sh`)
 - Busca tarballs en `${BACKUP_DIR}/monthly` y en `./restore/` (directorio local, útil para restaurar de un dump recibido por correo / pendrive).
 - Sin args: lista interactiva de tarballs disponibles.
 - Con args: `bash scripts/restore.sh <YYYY-MM-DD> [<bucket>]`.
-- **Detección dinámica de contenedor MinIO**: prueba `acervo-minio` primero, después `acervo-minio-dev`. Toma la red de `docker inspect`. Esto permite restaurar tanto en prod como en dev.
+- **Detección dinámica de contenedor SeaweedFS**: prueba `acervo-seaweedfs` primero, después `acervo-seaweedfs-dev`. Toma la red de `docker inspect`.
 - Extrae el tar a un `mktemp -d`, hace `mc mirror /restore/<bucket> acervo/<bucket> --overwrite` por bucket.
 - Si el bucket no está en el tar, lo saltea con un `WARNING`.
 
-### 5.7 Firewall (`scripts/firewall-setup.sh`, solo standalone)
-- Requiere root.
-- Reset de UFW. Default `deny incoming`, `allow outgoing`.
-- Permite SSH (22) abierto.
-- Permite 80/443 **solo desde** `ALLOWED_SERVER_IPS` (separados por coma).
-- Recordatorio final: Docker bypassea UFW por default; si se requiere blindar, hay que setear `"iptables": false` en `/etc/docker/daemon.json` y `systemctl restart docker`.
+---
+
+## 5. Decisiones de diseño que duelen al modificar
+
+Casi todas vienen de un `fix` específico en el changelog. Si las tocas, valida con cuidado.
+
+### 5.1 SeaweedFS arranca abierto si no hay `-s3.config`
+Por default SeaweedFS expone la S3 API sin auth. La protección está en `scripts/seaweedfs-entrypoint.sh`, que verifica que `/etc/seaweedfs/identities.json` exista y no esté vacío **antes** de exec a `weed server`. Si el archivo no existe, el contenedor falla rápido con un mensaje claro. **No remuevas el entrypoint custom sin un reemplazo equivalente** (e.g. un build con la config baked-in).
+
+### 5.2 Las credenciales de admin no se generan en el init
+A diferencia de los `<bucket>-user` (passwords aleatorias generadas por el init), las credenciales del identity `admin` vienen de `ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY` del `.env`. Esto es deliberado: el admin es la cuenta de operación humana, no rotada automáticamente. Para rotarla, edita el `.env`, corre `make init-seaweedfs` y reinicia.
+
+### 5.3 El init NO se conecta al servidor SeaweedFS
+A diferencia del viejo `init-buckets.sh` (que hablaba con MinIO via `mc`), `init-seaweedfs.sh` solo escribe `config/identities.json` en disco. SeaweedFS lee el archivo en su próximo arranque. Por eso el flujo correcto es: `make init-seaweedfs` → `make restart`.
+
+### 5.4 Los buckets se crean implícitamente al primer `PUT` o `mc mb`
+SeaweedFS no requiere "crear" un bucket de antemano para que un identity con `Write:<bucket>` lo pueda usar. El primer `PUT` materializa el bucket. El script de migración corre `mc mb new/<bucket> --ignore-existing` por buena medida.
+
+### 5.5 Las métricas Prometheus están sin auth en red interna
+SeaweedFS expone `/metrics` en `-metricsPort=9091` sin token. La protección es de red: solo contenedores en `iieg-network` pueden llegar al puerto. El scrape de huachicol pasa de `http://acervo-minio:9000/minio/v2/metrics/...` con bearer a `http://acervo-seaweedfs:9091/metrics` sin auth.
+
+### 5.6 `docker inspect` para detectar la red de SeaweedFS
+Tanto `backup.sh` como `restore.sh` derivan la red en runtime (`docker inspect acervo-seaweedfs -f '{{range ...}}'`). Esto sobrevive renombres y cambios de proyecto compose. No hardcodear el nombre de la red.
+
+### 5.7 El cliente `mc` se mantiene como herramienta de admin/backup
+Aunque migramos del **servidor** MinIO a SeaweedFS, `mc` (el CLI de MinIO) sigue siendo nuestra herramienta para `mirror`, `ls`, `mb`, etc. porque habla S3 nativo y maneja sigv4 bien. La imagen pineada es `pgsty/mc:RELEASE.2026-04-17T00-00-00Z`. Si `pgsty/mc` se vuelve inestable, se puede sustituir por `rclone/rclone` (sintaxis distinta pero equivalente).
+
+### 5.8 Eliminación del modo standalone como decisión consciente
+El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando producción servía la S3 API en un subdominio dedicado (`s3.jalisco.gob.mx`). Desde 1.18.x todo va por `iieg.jalisco.gob.mx/acervo/*` via gateway. Mantener standalone como modo dormido tenía costo: dos compose files, certs autofirmados, scripts de firewall, entrypoint dinámico de Nginx con dos plantillas. Borrarlo libera ~60% del código del repo y enfoca la atención.
 
 ---
 
-## 6. Decisiones de diseño que duelen al modificar
-
-Estas son las cosas que rompen producción si se tocan sin entender por qué están así. Casi todas vienen de un `fix` específico en el changelog.
-
-### 6.1 MinIO en red `internal: true` (standalone)
-No mover MinIO a la red pública aunque parezca más simple. La red interna es la barrera principal a internet — el firewall es defensa secundaria.
-
-### 6.2 La consola y `/console/static/` filtran IP, la API no
-La API S3 tiene que estar abierta porque los frontends públicos (portal, mapalab) leen objetos anónimos. La consola NO, porque es admin. No mezclar los dos `location`.
-
-### 6.3 `MINIO_SERVER_URL` debe estar **vacío** en modo gateway (sigv4)
-
-Histórico: en `1.18.1` se intentó setear `MINIO_SERVER_URL=https://YOUR_DOMAIN/acervo`. Eso rompió login del console con `401 Unauthorized` y `SignatureDoesNotMatch`.
-
-**Causa**: MinIO valida con AWS SigV4. El browser firma el request con `/acervo/...` en el path canonical, pero el proxy (gateway-hub) strip-ea el prefijo `/acervo` antes de llegar a MinIO. MinIO recalcula la firma con `/...` y no coincide.
-
-**Regla**:
-- Modo **standalone** sirve la S3 API en la raíz del subdominio → `MINIO_SERVER_URL=https://<ip>` funciona.
-- Modo **gateway** con path prefix → `MINIO_SERVER_URL=` vacío (o usar un subdominio dedicado sin prefix).
-- `MINIO_BROWSER_REDIRECT_URL` sí lleva el prefix porque solo afecta a redirects del console, no participa en sigv4.
-
-### 6.4 CSP custom en `/console/`
-La consola de MinIO usa `unsafe-inline`, `unsafe-eval` y carga `https://unpkg.com`. Si se aprieta la CSP por default de Nginx, la UI se queda en blanco. La policy actual está calibrada y se debe mantener si se actualiza la imagen.
-
-### 6.5 `proxy_buffering off` + `chunked_transfer_encoding off`
-Los uploads y descargas grandes pasan por streaming directo. Activar buffering haría que Nginx escriba a su tmpfs (`/var/cache/nginx`) y se quede sin espacio.
-
-### 6.6 `MINIO_INIT_ENDPOINT` distinto de `MINIO_SERVER_URL`
-Antes la misma variable se usaba para dos cosas: la URL pública de S3 (sigv4) y el endpoint interno donde `mc` se conecta. Se separó en `1.18.3`. El init siempre se conecta por DNS interno de docker (`http://acervo-minio:9000`), nunca por internet.
-
-### 6.7 Burst del rate-limit de consola en 1000
-Originalmente era bajo. En carga real (muchos assets de la consola pidiéndose en paralelo) saltaba `503`. Subido en `1.15.1`. No bajarlo.
-
-### 6.8 Limpieza del directorio mensual de backup vía contenedor
-En `1.13.2`, `rm -rf` directo desde host fallaba por permisos (el `mc` corre como root dentro del contenedor, los archivos quedan con uid 0). Se reemplazó por `docker run --rm -v ...:/cleanup alpine find /cleanup -mindepth 1 -delete`.
-
-### 6.9 `docker inspect` para detectar la red de MinIO
-Tanto `backup.sh` como `restore.sh` derivan la red en runtime (`docker inspect acervo-minio -f '{{range ...}}'`). Esto sobrevive renombres y cambios de proyecto compose. No hardcodear el nombre de la red.
-
-### 6.10 `--insecure` removido en comandos `mc`
-El cert autofirmado se monta como CA en MinIO. `--insecure` se quitó en `1.3.3` y `1.2.4` para que cualquier error de TLS se vea claro.
-
----
-
-## 7. Cron y operación
+## 6. Cron y operación
 
 | Comando | Efecto |
 |--------|--------|
-| `make cron-install` | Instala `0 3 1 * * /bin/bash <repo>/scripts/backup.sh` con el `ENV_FILE` que se haya pasado. Sobrescribe el crontab del usuario actual. |
+| `make cron-install` | Instala `0 3 1 * * /bin/bash <repo>/scripts/backup.sh` con `ENV_FILE=.env`. Sobrescribe el crontab del usuario actual. |
 | `make cron-remove` | `crontab -r`. **Cuidado**: borra TODO el crontab del usuario, no solo la entrada de acervo. |
 | `make backup` | Respaldo manual inmediato. |
 | `make backup-list` | Lista los tarballs mensuales. |
@@ -250,87 +162,75 @@ El cert autofirmado se monta como CA en MinIO. `--insecure` se quitó en `1.3.3`
 
 ---
 
-## 8. Endpoint `/ontoy` (versión del servicio)
+## 7. Variables de entorno (resumen)
 
-Cualquier `make up` o `make build` regenera `nginx/version.json` con la `VERSION` del repo y la fecha del último commit. Nginx lo sirve en `GET /ontoy` con `Cache-Control: no-cache`:
+| Variable | Función |
+|---------|---------|
+| `COMPOSE_PROJECT_NAME` | Aísla los recursos compose. |
+| `SEAWEEDFS_VERSION` | Tag de imagen `chrislusf/seaweedfs:<tag>`. Default `4.23`. |
+| `ACERVO_S3_PORT` | Puerto que publica SeaweedFS al host. Default `8333`. |
+| `ACERVO_ADMIN_ACCESS_KEY` / `ACERVO_ADMIN_SECRET_KEY` | Credenciales del identity `admin`. |
+| `ACERVO_BUCKETS` | Lista (space-separated, entre comillas) de buckets canónicos. |
+| `ACERVO_PUBLIC_BUCKETS` | Subconjunto que recibe anonymous GetObject. Default `portal mapalab iieg`. |
+| `BACKUP_DIR` | Directorio destino de backups (default `/backups/acervo`). |
+| `BACKUP_RETENTION_MONTHS` | Meses a conservar (default 2). |
+| `MIGRATE_MINIO_ACCESS_KEY` / `MIGRATE_MINIO_SECRET_KEY` | Solo durante migración one-shot. Se borran después. |
+| `MIGRATE_MINIO_VOLUME` | Nombre del volumen Docker viejo (default `acervo_minio_data`). |
 
-```json
-{"version":"1.20.1","service":"acervo","released_at":"2026-04-29"}
-```
-
-Lo usan los dashboards/monitoreo para verificar qué tag está corriendo realmente en cada MV. El nombre `/ontoy` ("on toy") es un guiño interno.
-
----
-
-## 9. Variables de entorno (resumen)
-
-| Variable | Standalone | Gateway | Dev | Función |
-|---------|:--:|:--:|:--:|---------|
-| `COMPOSE_PROJECT_NAME` | ✓ | ✓ | ✓ | Aísla los recursos compose. |
-| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | ✓ | — | — | Puertos que publica Nginx. |
-| `MINIO_API_PORT` / `MINIO_CONSOLE_PORT` | — | ✓ | ✓ | Puertos que publica MinIO directo. |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | ✓ | ✓ | ✓ | Credenciales root de MinIO. |
-| `MINIO_BROWSER_REDIRECT_URL` | ✓ | ✓ | — | Redirects del console (con `/acervo/console` en gateway). |
-| `MINIO_SERVER_URL` | ✓ (raíz) | **vacío** | — | URL pública usada en sigv4. Ver §6.3. |
-| `MINIO_PROMETHEUS_AUTH_TYPE` | — | ✓ | — | `jwt` o `public`. |
-| `MINIO_BUCKETS` | ✓ | ✓ | (opcional) | Lista (space-separated, entre comillas) de buckets canónicos. |
-| `ACERVO_PUBLIC_BUCKETS` | (init) | (init) | (init) | Subconjunto que recibe anonymous GetObject. Default `portal mapalab iieg`. |
-| `TRUSTED_PROXIES` | ✓ | — | — | CIDRs cuyo `X-Real-IP` se respeta. |
-| `CONSOLE_ALLOWED_IPS` | ✓ | — | — | IPs que pueden acceder a `/console/`. |
-| `ALLOWED_SERVER_IPS` | ✓ | — | — | IPs permitidas por UFW en 80/443. |
-| `BACKUP_DIR` | ✓ | ✓ | — | Directorio destino de backups (default `/backups/acervo`). |
-| `BACKUP_RETENTION_MONTHS` | ✓ | ✓ | — | Meses a conservar (default 2). |
-
-Convención clave: `MINIO_BUCKETS` debe ir **entre comillas** en los `.env*` (commit `5be8721`), porque docker compose no parsea espacios en valores sin comillas.
+Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre comillas** en los `.env*` (commit `5be8721`), porque docker compose no parsea espacios en valores sin comillas.
 
 ---
 
-## 10. Versionado, ramas y deudas
+## 8. Versionado, ramas y deudas
 
 ### Versionado
 - `VERSION` es la fuente de verdad. Cada `feat` → minor, `fix`/`perf`/`refactor`/`chore`/`docs` → patch.
 - Conventional commits (regla de proyecto IIEG).
-- `1.0.0` marcó la salida a producción inicial; hoy va por `1.20.1`.
+- `1.0.0` marcó la salida a producción inicial; hoy va por `1.22.0` (migración a SeaweedFS).
 
 ### Ramas
 - `main` — tracking upstream.
-- `develop` — integración.
+- `develop` — integración (en la práctica está atrás de production; ver "Deudas conocidas").
 - `production` — lo que está desplegado en la MV. Es la rama por defecto en este worktree.
 
-Al momento del último commit (`10f4d12`), `production` está alineada con `develop` y `main` está atrás.
+### Tags importantes
+- `v1.21.2` — último estado pre-migración a SeaweedFS. Punto de rollback canónico si la migración falla irreversiblemente.
 
 ### Deudas conocidas
-- **Dependencia del fork `pgsty/minio`**. Tras el archivado del repo y de las imágenes oficiales de MinIO CE (feb–abr 2026) se migró a `pgsty/minio:RELEASE.2026-04-17T00-00-00Z` y `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` (commit `e45efc3`, CHANGELOG 1.21.0). Riesgos abiertos: (1) las imágenes viven en Docker Hub bajo un namespace comunitario sin SLA — pendiente mirror a Artifact Registry; (2) Pigsty incluye disclaimer de "no afiliado con MinIO Inc." y podría verse forzado a renombrar por temas de marca; (3) decisión estratégica pendiente entre quedarse en `pgsty/minio` o migrar a AIStor Free / SeaweedFS / Garage.
+- **`chrislusf/seaweedfs:4.23` solo en Docker Hub**. Mismo riesgo que se tenía con `pgsty/minio`: si Docker Hub borra la imagen o cambia el namespace, el siguiente `make up` rompe. Pendiente: mirror a Artifact Registry de GCP.
 - **`make cron-remove` borra todo el crontab del usuario**, no solo la entrada de acervo. Si el usuario tiene otros crons, se pierden.
 - **Backup mensual sin verificación de integridad post-tar**. No se hace un `tar -tzf` de smoke test. Si el disco falla a mitad del tar, el archivo queda corrupto y no nos enteramos hasta intentar un restore.
 - **Sin offsite backup**. Todo vive en `BACKUP_DIR` local de la VM. Pérdida de la VM = pérdida de todos los respaldos.
-- **`.env.gateway` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
+- **`.env` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.env.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
+- **`develop` está 18+ commits atrás de `production`**. Históricamente se ha mergeado directo a production. No es un problema funcional, pero implica que `develop` no refleja la verdad operativa.
+- **Endpoint `/ontoy` retirado**. Hasta 1.21.2 lo servía el Nginx interno de standalone. En modo gateway nunca llegó a haber una versión funcionando. Si monitoreo lo necesita, agregar un sidecar `nginx:alpine` que sirva `version.json` en un puerto interno + ruta en gateway.
+- **`mc` (cliente MinIO) sigue como dependencia para backup/restore**. Pragmático pero acopla. Alternativa: migrar a `rclone` que también es Apache 2.0 y no depende del ecosistema MinIO.
 
 ---
 
-## 11. Flujo de cambio típico
+## 9. Flujo de cambio típico
 
 ```mermaid
 sequenceDiagram
     participant Dev as Desarrollador
-    participant Repo as Repo (develop)
+    participant Repo as Repo (production o feature branch)
     participant Prod as MV producción
-    participant Minio as MinIO
+    participant Seaweed as SeaweedFS
 
     Dev->>Repo: feat/fix con conventional commit
     Dev->>Repo: bump VERSION + entrada en CHANGELOG.md
-    Dev->>Repo: merge develop -> production
-    Dev->>Prod: ssh + git pull
-    Prod->>Prod: make up ENV=prod INFRA=gateway (regenera version.json)
-    Prod-->>Minio: docker compose recreate si hubo cambios de imagen/env
-    Dev->>Prod: curl https://iieg.jalisco.gob.mx/acervo/ontoy → confirma version
+    Dev->>Repo: tag vX.Y.Z (anotado)
+    Dev->>Prod: ssh + git pull + git checkout vX.Y.Z
+    Prod->>Prod: make up (compose recreate si cambia env/imagen)
+    Prod->>Seaweed: si cambia identities.json, make init-seaweedfs + make restart
 ```
 
 ---
 
-## 12. Cosas que NO hay en este repo (pero hay que saber)
+## 10. Cosas que NO hay en este repo (pero hay que saber)
 
 - **El gateway externo** (`gateway-hub`) vive en otro repo. Acervo solo expone su contenedor en la red `iieg-network`; el routing `/acervo/*` lo hace el gateway.
-- **Los clientes** (portal, mapalab, mariachi, sieej, dataengine, iieg) viven cada uno en su repo y consumen acervo usando las credenciales `<bucket>-user` que entrega `init-buckets.sh`.
-- **El monitoreo** (Prometheus/Grafana). El comando `make prometheus-token` genera el bearer JWT para scraping; el repo que lo consume es `huachicol` (mencionado en el target).
-- **El proceso de rotación de credenciales** se hace con `init-buckets.sh --rotate`; pasar las nuevas passwords al `.env.production` de cada cliente (variables `ACERVO_<REF>_SECRET_KEY`) es trabajo manual.
+- **Los clientes** (portal, mapalab, mariachi, sieej, dataengine, iieg, huachicol) viven cada uno en su repo y consumen acervo usando las credenciales `<bucket>-user` que entrega `init-seaweedfs.sh`.
+- **El monitoreo** (Prometheus/Grafana). Tras 1.22.0 el scrape es directo a `http://acervo-seaweedfs:9091/metrics` sin auth en `iieg-network`. El repo que consume las métricas es `huachicol`.
+- **El proceso de rotación de credenciales** se hace con `make rotate-seaweedfs [BUCKET=...]`. Las nuevas passwords se imprimen una vez; pasarlas al `.env.production` de cada cliente (variables `ACERVO_<REF>_SECRET_KEY`) es trabajo manual.
+- **Cómo SeaweedFS internamente almacena los blobs**: usa el formato propio de "needles" en volumes binarios bajo `/data`. No son archivos planos. Para portabilidad, el camino canónico sigue siendo `mc mirror` a otra cosa S3-compatible.

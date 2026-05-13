@@ -1,19 +1,12 @@
 *.env*
 !.env.example
-!.env.gateway.example
-!.env.development.example
 
-.minio.sys/
 *.log
 .DS_Store
 Thumbs.db
 
-nginx/ssl/*.crt
-nginx/ssl/*.key
-nginx/ssl/*.pem
-nginx/ssl/*.p12
-nginx/ssl/*.pfx
-*.csr
+config/identities.json
+config/*.json
 
 secrets/
 credentials/
@@ -21,5 +14,4 @@ credentials/
 
 *.tar.gz
 backups/
-
-nginx/version.json
+restore/*.tar.gz

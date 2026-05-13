@@ -5,15 +5,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 ENV_FILE="${ENV_FILE:-.env}"
-if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
-    set -a
-    . "$PROJECT_DIR/$ENV_FILE"
-    set +a
+if [ ! -f "$PROJECT_DIR/$ENV_FILE" ]; then
+    echo "ERROR: archivo $ENV_FILE no encontrado en $PROJECT_DIR." >&2
+    echo "       Corre 'make setup' para crearlo desde .env.example y editalo con creds reales." >&2
+    exit 1
 fi
+set -a
+. "$PROJECT_DIR/$ENV_FILE"
+set +a
+
+require_var() {
+    eval "val=\${$1:-}"
+    if [ -z "$val" ]; then
+        echo "ERROR: variable $1 no esta definida en $ENV_FILE." >&2
+        exit 1
+    fi
+}
+
+require_var ACERVO_ADMIN_ACCESS_KEY
+require_var ACERVO_ADMIN_SECRET_KEY
 
 BACKUP_DIR="${BACKUP_DIR:-/backups/acervo}"
-MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
-MINIO_SECRET_KEY="${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+
+MC_IMAGE="${MC_IMAGE:-pgsty/mc:RELEASE.2026-04-17T00-00-00Z}"
 
 DATE="${1:-}"
 TARGET_BUCKET="${2:-}"
@@ -21,7 +35,6 @@ TARGET_BUCKET="${2:-}"
 LOCAL_RESTORE_DIR="${PROJECT_DIR}/restore"
 SEARCH_DIRS=("${BACKUP_DIR}/monthly" "$LOCAL_RESTORE_DIR")
 
-# Buscar respaldos en ambas rutas
 find_backups() {
     local all=()
     for dir in "${SEARCH_DIRS[@]}"; do
@@ -76,7 +89,6 @@ if [ -z "$DATE" ]; then
         ARCHIVE="$SELECTED_FILE"
     fi
 else
-    # Buscar en BACKUP_DIR primero, luego en ./restore
     if [ -f "${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz" ]; then
         ARCHIVE="${BACKUP_DIR}/monthly/backup-${DATE}.tar.gz"
     elif [ -f "${LOCAL_RESTORE_DIR}/backup-${DATE}.tar.gz" ]; then
@@ -106,23 +118,17 @@ tar -xzf "$ARCHIVE" -C "$RESTORE_DIR"
 if [ -n "$TARGET_BUCKET" ]; then
     BUCKETS="$TARGET_BUCKET"
 else
-    BUCKETS="${MINIO_BUCKETS:?MINIO_BUCKETS is required}"
+    require_var ACERVO_BUCKETS
+    BUCKETS="$ACERVO_BUCKETS"
 fi
 
-MINIO_CONTAINER=""
-for candidate in acervo-minio acervo-minio-dev; do
-    if docker ps --format '{{.Names}}' | grep -qx "$candidate"; then
-        MINIO_CONTAINER="$candidate"
-        break
-    fi
-done
-
-if [ -z "$MINIO_CONTAINER" ]; then
-    echo "ERROR: No se encontró contenedor MinIO en ejecución (acervo-minio o acervo-minio-dev)"
+CONTAINER="acervo-seaweedfs"
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "ERROR: contenedor '$CONTAINER' no esta en ejecucion."
     exit 1
 fi
 
-MINIO_NETWORK=$(docker inspect "$MINIO_CONTAINER" -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
+NETWORK=$(docker inspect "$CONTAINER" -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -n 1)
 
 for BUCKET in $BUCKETS; do
     if [ ! -d "${RESTORE_DIR}/${BUCKET}" ]; then
@@ -130,13 +136,13 @@ for BUCKET in $BUCKETS; do
         continue
     fi
 
-    echo "Restoring bucket: $BUCKET (target: $MINIO_CONTAINER)"
+    echo "Restoring bucket: $BUCKET (target: $CONTAINER)"
     docker run --rm \
-        --network "${MINIO_NETWORK}" \
+        --network "${NETWORK}" \
         -v "${RESTORE_DIR}:/restore:ro" \
         --entrypoint=/bin/sh \
-        pgsty/mc:RELEASE.2026-04-17T00-00-00Z -c "
-            mc alias set acervo http://${MINIO_CONTAINER}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}' && \
+        "$MC_IMAGE" -c "
+            mc alias set acervo http://${CONTAINER}:8333 '${ACERVO_ADMIN_ACCESS_KEY}' '${ACERVO_ADMIN_SECRET_KEY}' && \
             mc mb acervo/${BUCKET} --ignore-existing && \
             mc mirror /restore/${BUCKET} acervo/${BUCKET} --overwrite
         "

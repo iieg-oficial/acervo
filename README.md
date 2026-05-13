@@ -1,61 +1,74 @@
 # Acervo
 
-Servicio de almacenamiento de archivos para IIEG basado en MinIO (compatible con S3).
+Servicio de almacenamiento de archivos para IIEG basado en SeaweedFS (compatible con la API S3).
 
 ## Requisitos
 
 - Docker y Docker Compose
-- UFW (para firewall en producción)
+- Red Docker externa `iieg-network` (gestionada por el repo `gateway-hub`)
 
-## Configuración
+## Configuración inicial
 
 ```bash
 make setup
-# Editar .env con credenciales y IPs reales
-make certs
+# Editar .env con credenciales reales
+make init-seaweedfs   # Genera config/identities.json (imprime nuevas creds por bucket)
 ```
 
 ## Uso
 
 ```bash
-make up ENV=prod          # Levantar producción
-make init-buckets         # Crear buckets y usuarios
-make logs                 # Ver logs
-make down                 # Detener
+make up        # Levantar
+make logs      # Ver logs
+make down      # Detener
 ```
 
-## Acceso
+## Rotación de credenciales
 
-| Ambiente | API | Consola |
-|----------|-----|---------|
-| Dev | http://localhost:9000 | http://localhost:9001 |
-| Prod | https://SERVER_IP | https://SERVER_IP/console/ |
-
-## Seguridad
-
-- **HTTPS** con certificado autofirmado por IP (`make certs`)
-- **Consola restringida** por IP via `CONSOLE_ALLOWED_IPS` en `.env`
-- **Rate limiting**: API 50r/s, consola 5r/s
-- **Hardening Docker**: `no-new-privileges`, `cap_drop: ALL`, filesystem read-only en nginx, límites de memoria/CPU
-- **Red interna**: MinIO no expone puertos al host, solo Nginx es público
-- **Firewall UFW**: `make firewall-setup` restringe puertos 80/443 a IPs de `ALLOWED_SERVER_IPS`
-- **Aislamiento por bucket**: cada sistema (portal, mapalab, mariachi, dataengine) tiene su usuario y política IAM
+```bash
+make rotate-seaweedfs                  # Rotar todas
+make rotate-seaweedfs BUCKET=portal    # Rotar solo un bucket
+make restart                           # Aplicar la nueva config
+```
 
 ## Respaldos
 
 ```bash
-make backup               # Respaldo manual
-make restore DATE=2026-01-15          # Restaurar todos los buckets
-make restore DATE=2026-01-15 BUCKET=mapalab  # Restaurar un bucket
-make backup-list          # Listar respaldos
-make cron-install         # Cron diario a las 2:00 AM
-make cron-remove          # Desinstalar cron
+make backup                              # Respaldo manual
+make restore DATE=2026-05-13             # Restaurar todos los buckets
+make restore DATE=2026-05-13 BUCKET=portal  # Restaurar un bucket
+make backup-list                         # Listar respaldos
+make cron-install                        # Cron mensual a las 3:00 AM
+make cron-remove                         # Desinstalar cron (cuidado: borra todo el crontab)
 ```
 
-Rotación: diarios (`BACKUP_RETENTION_DAYS`), semanales (`BACKUP_RETENTION_WEEKS`), mensuales (`BACKUP_RETENTION_MONTHS`).
+Rotación: `BACKUP_RETENTION_MONTHS` controla cuántos meses se conservan los tarballs (default 2).
+
+## Migración desde MinIO (one-shot)
+
+Si vienes de una versión anterior (1.21.x con MinIO):
+
+```bash
+# 1. Genera identidades y arranca SeaweedFS
+make init-seaweedfs
+make up
+
+# 2. Configura MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en .env (root del MinIO viejo)
+make migrate-from-minio
+```
+
+Detalles completos: `docs/CHANGELOG.md` (1.22.0).
+
+## Documentación
+
+| Archivo | Contenido |
+|--------|-----------|
+| `docs/context.md` | Contexto técnico completo: arquitectura, componentes, decisiones de diseño |
+| `docs/CHANGELOG.md` | Historial de cambios |
+| `docs/politica-respaldos.md` | Política operativa de respaldos |
 
 ## Comandos
 
 ```bash
-make help                 # Ver todos los comandos disponibles
+make help    # Ver todos los comandos disponibles
 ```

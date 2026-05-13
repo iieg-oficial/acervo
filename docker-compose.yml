@@ -1,73 +1,35 @@
 name: acervo
 
 services:
-  nginx:
-    image: nginx:alpine
-    container_name: acervo-nginx
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.23}
+    container_name: acervo-seaweedfs
+    user: "seaweed:seaweed"
+    entrypoint: ["/bin/sh", "/seaweedfs-entrypoint.sh"]
+    command:
+      - -dir=/data
+      - -s3
+      - -s3.config=/etc/seaweedfs/identities.json
+      - -s3.port=8333
+      - -metricsPort=9091
+      - -ip.bind=0.0.0.0
     ports:
-      - "${NGINX_HTTP_PORT:-80}:80"
-      - "${NGINX_HTTPS_PORT:-443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d/acervo.conf:/etc/nginx/conf.d/acervo.conf:ro
-      - ./nginx/version.json:/etc/nginx/version.json:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - "${ACERVO_S3_PORT:-8333}:8333"
     environment:
-      CONSOLE_ALLOWED_IPS: ${CONSOLE_ALLOWED_IPS:-}
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-    entrypoint: ["/docker-entrypoint.d/nginx-entrypoint.sh"]
-    configs:
-      - source: nginx_entrypoint
-        target: /docker-entrypoint.d/nginx-entrypoint.sh
-        mode: 0755
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - acervo_public
-      - acervo_internal
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/cache/nginx
-      - /var/run
-      - /etc/nginx/conf.d/dynamic:mode=755
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-
-  minio:
-    image: pgsty/minio:RELEASE.2026-04-17T00-00-00Z
-    container_name: acervo-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
-      MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
+      WEED_LEVELDB2_ENABLED: "true"
     volumes:
-      - minio_data:/data
-      - ./nginx/ssl/acervo.crt:/root/.minio/certs/CAs/acervo.crt:ro
+      - seaweedfs_data:/data
+      - ./config:/etc/seaweedfs:ro
+      - ./scripts/seaweedfs-entrypoint.sh:/seaweedfs-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status | grep -q IsLeader"]
       interval: 30s
       timeout: 20s
       retries: 3
+      start_period: 30s
     networks:
-      - acervo_internal
+      - acervo_network
+      - iieg-network
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -81,43 +43,26 @@ services:
 
   acervo-init:
     profiles: ["init"]
-    image: pgsty/mc:RELEASE.2026-04-17T00-00-00Z
+    image: alpine:3.20
     container_name: acervo-init
-    entrypoint: ["/bin/sh", "/scripts/init-buckets.sh"]
+    entrypoint: ["/bin/sh", "/scripts/init-seaweedfs.sh"]
     volumes:
-      - ./scripts/init-buckets.sh:/scripts/init-buckets.sh:ro
-      - ./nginx/ssl/acervo.crt:/etc/ssl/certs/acervo.crt:ro
+      - ./scripts/init-seaweedfs.sh:/scripts/init-seaweedfs.sh:ro
+      - ./config:/etc/seaweedfs
     environment:
-      MINIO_BUCKETS: ${MINIO_BUCKETS}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
-    tmpfs:
-      - /root/.mc
-      - /tmp
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - acervo_internal
+      ACERVO_BUCKETS: "${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
+      ACERVO_PUBLIC_BUCKETS: "${ACERVO_PUBLIC_BUCKETS:-portal mapalab iieg}"
+      ACERVO_ADMIN_ACCESS_KEY: "${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
+      ACERVO_ADMIN_SECRET_KEY: "${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
+      ROTATE_FLAG: "${ROTATE_FLAG:-0}"
+      TARGET_BUCKET: "${TARGET_BUCKET:-}"
     restart: "no"
-    security_opt:
-      - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-
-configs:
-  nginx_entrypoint:
-    file: ./scripts/nginx-entrypoint.sh
 
 volumes:
-  minio_data:
+  seaweedfs_data:
 
 networks:
-  acervo_internal:
+  acervo_network:
     driver: bridge
-    internal: true
-  acervo_public:
-    driver: bridge
+  iieg-network:
+    external: true
