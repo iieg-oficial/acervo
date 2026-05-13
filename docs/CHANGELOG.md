@@ -11,6 +11,16 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.21.2] - 2026-05-13
+
+### Changed
+
+- **`docs/context.md`** actualizado para reflejar el fork `pgsty/*` ya pineado en los compose files (1.21.0). Se corrigieron las referencias residuales a `minio/minio:latest` y `minio/mc` en §3 (diagrama), §5.1 (servicio MinIO), §5.4 (init de buckets) y §5.5 (backup); el bullet de deudas de §10 sobre "imagen sin pin" se sustituyo por una entrada que documenta los riesgos abiertos del fork (mirror pendiente a Artifact Registry, riesgo de marca registrada, decision estrategica vs alternativas como SeaweedFS / Garage / AIStor Free).
+
+### Notas
+
+Este bump es solo de documentacion (chore, sin cambios en codigo ni configuracion). Se etiqueta tambien con `v1.21.2` en Git como punto de respaldo previo a la evaluacion de migracion del backend de storage (de MinIO al fork `pgsty/minio` a otro proveedor S3-compatible).
+
 ## [1.21.1] - 2026-05-12
 
 ### Changed
