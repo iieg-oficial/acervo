@@ -25,33 +25,18 @@ Cada bucket tiene su propio identity (`<bucket>-user`) en SeaweedFS con `actions
 
 ---
 
-## 2. Modos de despliegue
+## 2. Modo de despliegue
 
-El `Makefile` selecciona compose file y `.env` con una variable:
+Único modo: producción detrás de gateway externo.
 
-```
-ENV = dev | prod          (default: dev)
-```
-
-### 2.1 `ENV=dev` — desarrollo local
-- Archivo: `docker-compose.dev.yml`
-- `.env`: `.env.development`
-- Levanta solo SeaweedFS, expone `8333` (S3 API), `8888` (Filer) y `9091` (métricas) al host directamente.
-- Sin gateway, sin SSL.
-
-### 2.2 `ENV=prod` — producción detrás de gateway externo
-- Archivo: `docker-compose.gateway.yml`
-- `.env`: `.env.gateway`
+- Archivo: `docker-compose.yml`
+- `.env`: `.env` (gitignored, ver `.env.example` para plantilla)
 - SeaweedFS se publica en una red externa `iieg-network` (declarada como `external: true`) y un gateway compartido (`gateway-hub`) enruta `/acervo/*` hacia este contenedor.
-- Es el único modo de producción soportado (dominio `iieg.jalisco.gob.mx/acervo/`).
+- Dominio: `iieg.jalisco.gob.mx/acervo/`.
 
-> **Selección de modo**:
-> ```
-> make up                # dev
-> make up ENV=prod       # gateway (producción)
-> ```
-
-> **Histórico**: existió un modo `INFRA=standalone` con Nginx propio + UFW + cert autofirmado (versiones 1.0.0 – 1.21.2). Se retiró en 1.22.0 porque desde 1.18.x toda producción real corría en modo gateway.
+> **Histórico**:
+> - Existió un modo `INFRA=standalone` con Nginx propio + UFW + cert autofirmado (versiones 1.0.0 – 1.21.2). Retirado en 1.22.0 porque desde 1.18.x toda producción real corría en modo gateway.
+> - Existió un modo `ENV=dev` con `docker-compose.dev.yml` + `.env.development` para desarrollo local. Retirado en 1.22.0 (mismo bump) porque en la práctica todo el desarrollo se hace contra GCP staging del ecosistema; mantener un compose dev separado solo agregaba ruido.
 
 ---
 
@@ -88,7 +73,7 @@ flowchart LR
 - Entrypoint custom: `scripts/seaweedfs-entrypoint.sh` aborta el arranque si `identities.json` no existe o está vacío (evita un deploy accidental sin auth, ver §5.2).
 - Healthcheck: `wget --spider http://localhost:8333/status` cada 30s.
 - Hardening: `no-new-privileges:true`, `cap_drop: ALL`.
-- Puertos publicados al host (modo gateway): solo `${ACERVO_S3_PORT:-8333}:8333`. Las métricas se consumen por DNS interno desde la red `iieg-network`.
+- Puertos publicados al host: solo `${ACERVO_S3_PORT:-8333}:8333`. Las métricas se consumen por DNS interno desde la red `iieg-network`.
 
 ### 4.2 Init de identidades (`scripts/init-seaweedfs.sh`, perfil `init`)
 - Imagen: `alpine:3.20`. Profile `init` para que no levante automáticamente con `up`.
@@ -101,7 +86,7 @@ flowchart LR
 - Si `ACERVO_PUBLIC_BUCKETS` tiene valor, crea el identity `anonymous` (sin credenciales) con `actions: ["Read:portal", "Read:mapalab", "Read:iieg"]` (o el subset definido).
 - Flag `ROTATE_FLAG=1`: aunque el user exista, regenera password y la imprime. Combinable con `TARGET_BUCKET=portal` para rotar solo uno.
 - Passwords se imprimen solo cuando se generan. Si se pierden, el único camino es rotación.
-- Tras correr el init, **hay que reiniciar SeaweedFS** (`make restart ENV=prod`) para que cargue el `identities.json` actualizado. SeaweedFS lee el archivo al startup, no en caliente.
+- Tras correr el init, **hay que reiniciar SeaweedFS** (`make restart`) para que cargue el `identities.json` actualizado. SeaweedFS lee el archivo al startup, no en caliente.
 
 ### 4.3 Migración one-shot desde MinIO (`scripts/migrate-from-minio.sh`)
 - Script de migración única, se conserva en el repo para fines de auditoría aunque solo se corra una vez.
@@ -141,10 +126,10 @@ Casi todas vienen de un `fix` específico en el changelog. Si las tocas, valida 
 Por default SeaweedFS expone la S3 API sin auth. La protección está en `scripts/seaweedfs-entrypoint.sh`, que verifica que `/etc/seaweedfs/identities.json` exista y no esté vacío **antes** de exec a `weed server`. Si el archivo no existe, el contenedor falla rápido con un mensaje claro. **No remuevas el entrypoint custom sin un reemplazo equivalente** (e.g. un build con la config baked-in).
 
 ### 5.2 Las credenciales de admin no se generan en el init
-A diferencia de los `<bucket>-user` (passwords aleatorias generadas por el init), las credenciales del identity `admin` vienen de `ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY` del `.env.gateway`. Esto es deliberado: el admin es la cuenta de operación humana, no rotada automáticamente. Para rotarla, edita el `.env`, corre `make init-seaweedfs ENV=prod` y reinicia.
+A diferencia de los `<bucket>-user` (passwords aleatorias generadas por el init), las credenciales del identity `admin` vienen de `ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY` del `.env`. Esto es deliberado: el admin es la cuenta de operación humana, no rotada automáticamente. Para rotarla, edita el `.env`, corre `make init-seaweedfs` y reinicia.
 
 ### 5.3 El init NO se conecta al servidor SeaweedFS
-A diferencia del viejo `init-buckets.sh` (que hablaba con MinIO via `mc`), `init-seaweedfs.sh` solo escribe `config/identities.json` en disco. SeaweedFS lee el archivo en su próximo arranque. Por eso el flujo correcto es: `make init-seaweedfs ENV=prod` → `make restart ENV=prod`.
+A diferencia del viejo `init-buckets.sh` (que hablaba con MinIO via `mc`), `init-seaweedfs.sh` solo escribe `config/identities.json` en disco. SeaweedFS lee el archivo en su próximo arranque. Por eso el flujo correcto es: `make init-seaweedfs` → `make restart`.
 
 ### 5.4 Los buckets se crean implícitamente al primer `PUT` o `mc mb`
 SeaweedFS no requiere "crear" un bucket de antemano para que un identity con `Write:<bucket>` lo pueda usar. El primer `PUT` materializa el bucket. El script de migración corre `mc mb new/<bucket> --ignore-existing` por buena medida.
@@ -167,11 +152,11 @@ El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando pr
 
 | Comando | Efecto |
 |--------|--------|
-| `make cron-install ENV=prod` | Instala `0 3 1 * * /bin/bash <repo>/scripts/backup.sh` con `ENV_FILE=.env.gateway`. Sobrescribe el crontab del usuario actual. |
+| `make cron-install` | Instala `0 3 1 * * /bin/bash <repo>/scripts/backup.sh` con `ENV_FILE=.env`. Sobrescribe el crontab del usuario actual. |
 | `make cron-remove` | `crontab -r`. **Cuidado**: borra TODO el crontab del usuario, no solo la entrada de acervo. |
-| `make backup ENV=prod` | Respaldo manual inmediato. |
-| `make backup-list ENV=prod` | Lista los tarballs mensuales. |
-| `make restore DATE=YYYY-MM-DD [BUCKET=nombre] ENV=prod` | Restaura todos los buckets o uno específico. |
+| `make backup` | Respaldo manual inmediato. |
+| `make backup-list` | Lista los tarballs mensuales. |
+| `make restore DATE=YYYY-MM-DD [BUCKET=nombre]` | Restaura todos los buckets o uno específico. |
 
 > **Política de retención**: `BACKUP_RETENTION_MONTHS` (default 2) → los tarballs mayores a `MONTHS*30` días se borran al final de cada corrida. Logs en `${BACKUP_DIR}/logs` se conservan 90 días.
 
@@ -179,20 +164,18 @@ El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando pr
 
 ## 7. Variables de entorno (resumen)
 
-| Variable | Prod (gateway) | Dev | Función |
-|---------|:--:|:--:|---------|
-| `COMPOSE_PROJECT_NAME` | ✓ | ✓ | Aísla los recursos compose. |
-| `SEAWEEDFS_VERSION` | ✓ | ✓ | Tag de imagen `chrislusf/seaweedfs:<tag>`. Default `4.23`. |
-| `ACERVO_S3_PORT` | ✓ | ✓ | Puerto que publica SeaweedFS al host. Default `8333`. |
-| `ACERVO_FILER_PORT` | — | ✓ | Puerto del Filer (solo dev). |
-| `ACERVO_METRICS_PORT` | — | ✓ | Puerto Prometheus (solo dev). |
-| `ACERVO_ADMIN_ACCESS_KEY` / `ACERVO_ADMIN_SECRET_KEY` | ✓ | ✓ | Credenciales del identity `admin`. |
-| `ACERVO_BUCKETS` | ✓ | ✓ | Lista (space-separated, entre comillas) de buckets canónicos. |
-| `ACERVO_PUBLIC_BUCKETS` | ✓ | ✓ | Subconjunto que recibe anonymous GetObject. Default `portal mapalab iieg`. |
-| `BACKUP_DIR` | ✓ | — | Directorio destino de backups (default `/backups/acervo`). |
-| `BACKUP_RETENTION_MONTHS` | ✓ | — | Meses a conservar (default 2). |
-| `MIGRATE_MINIO_ACCESS_KEY` / `MIGRATE_MINIO_SECRET_KEY` | (one-shot) | — | Solo durante migración. Se borran después. |
-| `MIGRATE_MINIO_VOLUME` | (one-shot) | — | Nombre del volumen Docker viejo (default `acervo_minio_data`). |
+| Variable | Función |
+|---------|---------|
+| `COMPOSE_PROJECT_NAME` | Aísla los recursos compose. |
+| `SEAWEEDFS_VERSION` | Tag de imagen `chrislusf/seaweedfs:<tag>`. Default `4.23`. |
+| `ACERVO_S3_PORT` | Puerto que publica SeaweedFS al host. Default `8333`. |
+| `ACERVO_ADMIN_ACCESS_KEY` / `ACERVO_ADMIN_SECRET_KEY` | Credenciales del identity `admin`. |
+| `ACERVO_BUCKETS` | Lista (space-separated, entre comillas) de buckets canónicos. |
+| `ACERVO_PUBLIC_BUCKETS` | Subconjunto que recibe anonymous GetObject. Default `portal mapalab iieg`. |
+| `BACKUP_DIR` | Directorio destino de backups (default `/backups/acervo`). |
+| `BACKUP_RETENTION_MONTHS` | Meses a conservar (default 2). |
+| `MIGRATE_MINIO_ACCESS_KEY` / `MIGRATE_MINIO_SECRET_KEY` | Solo durante migración one-shot. Se borran después. |
+| `MIGRATE_MINIO_VOLUME` | Nombre del volumen Docker viejo (default `acervo_minio_data`). |
 
 Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre comillas** en los `.env*` (commit `5be8721`), porque docker compose no parsea espacios en valores sin comillas.
 
@@ -218,7 +201,7 @@ Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre c
 - **`make cron-remove` borra todo el crontab del usuario**, no solo la entrada de acervo. Si el usuario tiene otros crons, se pierden.
 - **Backup mensual sin verificación de integridad post-tar**. No se hace un `tar -tzf` de smoke test. Si el disco falla a mitad del tar, el archivo queda corrupto y no nos enteramos hasta intentar un restore.
 - **Sin offsite backup**. Todo vive en `BACKUP_DIR` local de la VM. Pérdida de la VM = pérdida de todos los respaldos.
-- **`.env.gateway` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
+- **`.env` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.env.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
 - **`develop` está 18+ commits atrás de `production`**. Históricamente se ha mergeado directo a production. No es un problema funcional, pero implica que `develop` no refleja la verdad operativa.
 - **Endpoint `/ontoy` retirado**. Hasta 1.21.2 lo servía el Nginx interno de standalone. En modo gateway nunca llegó a haber una versión funcionando. Si monitoreo lo necesita, agregar un sidecar `nginx:alpine` que sirva `version.json` en un puerto interno + ruta en gateway.
 - **`mc` (cliente MinIO) sigue como dependencia para backup/restore**. Pragmático pero acopla. Alternativa: migrar a `rclone` que también es Apache 2.0 y no depende del ecosistema MinIO.
@@ -238,8 +221,8 @@ sequenceDiagram
     Dev->>Repo: bump VERSION + entrada en CHANGELOG.md
     Dev->>Repo: tag vX.Y.Z (anotado)
     Dev->>Prod: ssh + git pull + git checkout vX.Y.Z
-    Prod->>Prod: make up ENV=prod (compose recreate si cambia env/imagen)
-    Prod->>Seaweed: si cambia identities.json, make init-seaweedfs ENV=prod + make restart ENV=prod
+    Prod->>Prod: make up (compose recreate si cambia env/imagen)
+    Prod->>Seaweed: si cambia identities.json, make init-seaweedfs + make restart
 ```
 
 ---
@@ -249,5 +232,5 @@ sequenceDiagram
 - **El gateway externo** (`gateway-hub`) vive en otro repo. Acervo solo expone su contenedor en la red `iieg-network`; el routing `/acervo/*` lo hace el gateway.
 - **Los clientes** (portal, mapalab, mariachi, sieej, dataengine, iieg, huachicol) viven cada uno en su repo y consumen acervo usando las credenciales `<bucket>-user` que entrega `init-seaweedfs.sh`.
 - **El monitoreo** (Prometheus/Grafana). Tras 1.22.0 el scrape es directo a `http://acervo-seaweedfs:9091/metrics` sin auth en `iieg-network`. El repo que consume las métricas es `huachicol`.
-- **El proceso de rotación de credenciales** se hace con `make rotate-seaweedfs ENV=prod [BUCKET=...]`. Las nuevas passwords se imprimen una vez; pasarlas al `.env.production` de cada cliente (variables `ACERVO_<REF>_SECRET_KEY`) es trabajo manual.
+- **El proceso de rotación de credenciales** se hace con `make rotate-seaweedfs [BUCKET=...]`. Las nuevas passwords se imprimen una vez; pasarlas al `.env.production` de cada cliente (variables `ACERVO_<REF>_SECRET_KEY`) es trabajo manual.
 - **Cómo SeaweedFS internamente almacena los blobs**: usa el formato propio de "needles" en volumes binarios bajo `/data`. No son archivos planos. Para portabilidad, el camino canónico sigue siendo `mc mirror` a otra cosa S3-compatible.

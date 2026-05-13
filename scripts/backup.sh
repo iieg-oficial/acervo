@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-ENV_FILE="${ENV_FILE:-.env.gateway}"
+ENV_FILE="${ENV_FILE:-.env}"
 if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
     set -a
     . "$PROJECT_DIR/$ENV_FILE"

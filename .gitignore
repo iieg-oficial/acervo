@@ -1,6 +1,5 @@
 *.env*
-!.env.gateway.example
-!.env.development.example
+!.env.example
 
 *.log
 .DS_Store

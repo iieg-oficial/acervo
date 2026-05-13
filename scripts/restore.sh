@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-ENV_FILE="${ENV_FILE:-.env.gateway}"
+ENV_FILE="${ENV_FILE:-.env}"
 if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
     set -a
     . "$PROJECT_DIR/$ENV_FILE"
@@ -109,16 +109,9 @@ else
     BUCKETS="${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
 fi
 
-CONTAINER=""
-for candidate in acervo-seaweedfs acervo-seaweedfs-dev; do
-    if docker ps --format '{{.Names}}' | grep -qx "$candidate"; then
-        CONTAINER="$candidate"
-        break
-    fi
-done
-
-if [ -z "$CONTAINER" ]; then
-    echo "ERROR: No se encontró contenedor SeaweedFS en ejecución (acervo-seaweedfs o acervo-seaweedfs-dev)"
+CONTAINER="acervo-seaweedfs"
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "ERROR: contenedor '$CONTAINER' no esta en ejecucion."
     exit 1
 fi
 

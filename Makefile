@@ -3,17 +3,8 @@ YELLOW := $(shell tput -Txterm setaf 3)
 WHITE  := $(shell tput -Txterm setaf 7)
 RESET  := $(shell tput -Txterm sgr0)
 
-ENV ?= dev
-
-ifeq ($(ENV),prod)
-	COMPOSE_FILE := docker-compose.gateway.yml
-	ENV_FILE     := .env.gateway
-	MSG_ENV      := Producción (gateway)
-else
-	COMPOSE_FILE := docker-compose.dev.yml
-	ENV_FILE     := .env.development
-	MSG_ENV      := Desarrollo
-endif
+COMPOSE_FILE := docker-compose.yml
+ENV_FILE     := .env
 
 COMPOSE_CMD      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 COMPOSE_CMD_INIT := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
@@ -26,12 +17,7 @@ help:
 	@echo ''
 	@echo '${YELLOW}IIEG Acervo - Comandos disponibles${RESET}'
 	@echo ''
-	@echo 'Uso: ${YELLOW}make <comando> [ENV=dev|prod]${RESET}'
-	@echo '     (Por defecto ENV=dev)'
-	@echo ''
-	@echo '${GREEN}Entornos disponibles:${RESET}'
-	@echo '  ${WHITE}ENV=dev${RESET}                          - Desarrollo local (SeaweedFS expone puertos)'
-	@echo '  ${WHITE}ENV=prod${RESET}                         - Produccion detras de gateway externo'
+	@echo 'Uso: ${YELLOW}make <comando>${RESET}'
 	@echo ''
 	@echo '${GREEN}Generales:${RESET}'
 	@echo '  ${YELLOW}up${RESET}                - Inicia el entorno en segundo plano'
@@ -57,19 +43,19 @@ help:
 	@echo '${GREEN}Utilidades:${RESET}'
 	@echo '  ${YELLOW}clean${RESET}             - Elimina contenedores, redes y volumenes'
 	@echo '  ${YELLOW}shell-seaweedfs${RESET}   - Terminal del contenedor SeaweedFS'
-	@echo '  ${YELLOW}setup${RESET}             - Crea archivos .env iniciales'
+	@echo '  ${YELLOW}setup${RESET}             - Crea archivo .env inicial'
 	@echo ''
 
 up:
-	@echo "${GREEN}Iniciando entorno de $(MSG_ENV)...${RESET}"
+	@echo "${GREEN}Iniciando entorno...${RESET}"
 	$(COMPOSE_CMD) up -d
 
 build:
-	@echo "${GREEN}Reconstruyendo entorno de $(MSG_ENV)...${RESET}"
+	@echo "${GREEN}Reconstruyendo entorno...${RESET}"
 	$(COMPOSE_CMD) up -d --build
 
 down:
-	@echo "${YELLOW}Deteniendo entorno de $(MSG_ENV)...${RESET}"
+	@echo "${YELLOW}Deteniendo entorno...${RESET}"
 	$(COMPOSE_CMD) down
 
 logs:
@@ -78,7 +64,7 @@ logs:
 restart: down up
 
 clean:
-	@echo "${YELLOW}ADVERTENCIA: make clean borra TODOS los datos persistentes del entorno $(MSG_ENV).${RESET}"
+	@echo "${YELLOW}ADVERTENCIA: make clean borra TODOS los datos persistentes.${RESET}"
 	@echo "${YELLOW}Esto eliminara:${RESET}"
 	@echo "  - Contenedores definidos en $(COMPOSE_FILE)"
 	@echo "  - Redes creadas por el stack"
@@ -91,29 +77,24 @@ clean:
 		fi; \
 	fi
 	@echo ""
-	@read -p "Escribe '$(ENV)' para confirmar el borrado: " CONFIRM; \
-		if [ "$$CONFIRM" != "$(ENV)" ]; then \
+	@read -p "Escribe 'borrar' para confirmar: " CONFIRM; \
+		if [ "$$CONFIRM" != "borrar" ]; then \
 			echo "${GREEN}Cancelado, no se borro nada.${RESET}"; \
 			exit 1; \
 		fi
-	@echo "${YELLOW}Limpiando entorno de $(MSG_ENV) (contenedores, redes y volúmenes)...${RESET}"
+	@echo "${YELLOW}Limpiando (contenedores, redes y volumenes)...${RESET}"
 	$(COMPOSE_CMD) down -v --remove-orphans
 
 shell-seaweedfs:
 	$(COMPOSE_CMD) exec seaweedfs /bin/sh
 
 setup:
-	@if [ ! -f .env.development ]; then \
-		cp .env.development.example .env.development; \
-		echo "${GREEN}Creado .env.development desde ejemplo${RESET}"; \
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "${GREEN}Creado .env desde ejemplo${RESET}"; \
+		echo "${YELLOW}Edita .env con las credenciales reales antes de 'make init-seaweedfs'${RESET}"; \
 	else \
-		echo "${YELLOW}.env.development ya existe${RESET}"; \
-	fi
-	@if [ ! -f .env.gateway ]; then \
-		cp .env.gateway.example .env.gateway; \
-		echo "${GREEN}Creado .env.gateway desde ejemplo${RESET}"; \
-	else \
-		echo "${YELLOW}.env.gateway ya existe${RESET}"; \
+		echo "${YELLOW}.env ya existe${RESET}"; \
 	fi
 
 init-seaweedfs:
