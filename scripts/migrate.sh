@@ -33,10 +33,21 @@ warn()  { echo "${YELLOW}[!] $1${RESET}"; }
 err()   { echo "${RED}[ERROR] $1${RESET}" >&2; }
 ok()    { echo "${GREEN}[OK] $1${RESET}"; }
 
+IIEG_ROOT="${IIEG_ROOT:-}"
+if [ -z "$IIEG_ROOT" ]; then
+    for candidate in "/IIEG" "/home/egar/IIEG"; do
+        if [ -d "$candidate" ]; then
+            IIEG_ROOT="$candidate"
+            break
+        fi
+    done
+fi
+
 CONSUMER_REPOS=(
-    "/home/egar/IIEG/mariachi"
-    "/home/egar/IIEG/huachicol"
-    "/home/egar/IIEG/mapalab-dataengine"
+    "$IIEG_ROOT/mariachi"
+    "$IIEG_ROOT/huachicol"
+    "$IIEG_ROOT/mapalab-dataengine"
+    "$IIEG_ROOT/gateway-hub"
 )
 
 detect_mode() {
@@ -44,6 +55,7 @@ detect_mode() {
         echo "$MIGRATE_MODE"
         return
     fi
+    [ -z "$IIEG_ROOT" ] && { echo "admin"; return; }
     local found=0
     for r in "${CONSUMER_REPOS[@]}"; do
         [ -d "$r" ] && found=$((found+1))
@@ -96,14 +108,66 @@ fi
 # -----------------------------------------------------------------------------
 step "Fase 1 — Snapshot de seguridad"
 
-if [ "$HAS_MINIO_DATA" = "1" ] && docker ps --format '{{.Names}}' | grep -qx acervo-minio; then
-    info "MinIO esta corriendo. Disparando backup..."
-    if ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/backup.sh"; then
-        ok "Snapshot tar.gz creado"
-    else
-        err "El backup fallo. Aborta y revisa logs antes de continuar."
-        exit 1
+snapshot_minio() {
+    local minio_container="acervo-minio"
+    local backup_dir="${BACKUP_DIR:-/backups/acervo}"
+    local date
+    date=$(date +%Y-%m-%d)
+    local timestamp
+    timestamp=$(date +%Y-%m-%d_%H-%M-%S)
+    local archive="${backup_dir}/monthly/backup-PREMIGRATE-${timestamp}.tar.gz"
+    local tmpdir="${backup_dir}/monthly/.premigrate-${timestamp}"
+
+    if [ -z "${MIGRATE_MINIO_ACCESS_KEY:-}" ] || [ -z "${MIGRATE_MINIO_SECRET_KEY:-}" ]; then
+        warn "MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY no definidas — snapshot via mc no posible."
+        warn "El volumen acervo_minio_data sigue siendo tu red de salvataje (mc mirror lo lee directo)."
+        return 0
     fi
+
+    local network
+    network=$(docker inspect "$minio_container" -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' 2>/dev/null | head -n 1)
+    if [ -z "$network" ]; then
+        warn "No se pudo determinar la red de $minio_container. Snapshot SKIPPED."
+        return 0
+    fi
+
+    mkdir -p "$tmpdir" "${backup_dir}/logs"
+    info "Mirror buckets de MinIO viejo a $tmpdir..."
+    local mc_image="${MC_IMAGE:-pgsty/mc:RELEASE.2026-04-17T00-00-00Z}"
+    local fail=0
+    for bucket in $ACERVO_BUCKETS; do
+        info "  - $bucket"
+        if ! docker run --rm \
+            --network "$network" \
+            -v "${tmpdir}:/backup" \
+            --entrypoint=/bin/sh \
+            "$mc_image" -c "
+                mc alias set old http://${minio_container}:9000 '${MIGRATE_MINIO_ACCESS_KEY}' '${MIGRATE_MINIO_SECRET_KEY}' >/dev/null && \
+                mc ls old/${bucket} >/dev/null 2>&1 || { echo 'bucket no existe en MinIO viejo, skip'; exit 0; } && \
+                mkdir -p /backup/${bucket} && \
+                mc mirror old/${bucket} /backup/${bucket}
+            " 2>&1 | tail -3; then
+            fail=$((fail+1))
+        fi
+    done
+
+    info "Comprimiendo a $archive..."
+    tar -czf "$archive" -C "$tmpdir" . 2>/dev/null
+    docker run --rm -v "${tmpdir}:/cleanup" alpine find /cleanup -mindepth 1 -delete >/dev/null 2>&1 || true
+    rmdir "$tmpdir" 2>/dev/null || true
+
+    if [ -s "$archive" ]; then
+        local size
+        size=$(du -h "$archive" | cut -f1)
+        ok "Snapshot tar.gz: $archive ($size)"
+    else
+        warn "El tar.gz quedo vacio. El volumen acervo_minio_data sigue intacto."
+    fi
+}
+
+if [ "$HAS_MINIO_DATA" = "1" ] && docker ps --format '{{.Names}}' | grep -qx acervo-minio; then
+    info "MinIO esta corriendo. Disparando snapshot..."
+    snapshot_minio
 elif [ "$HAS_MINIO_DATA" = "1" ]; then
     info "Volumen existe pero el contenedor acervo-minio no esta corriendo."
     info "El mirror leera el volumen directamente. Si quieres un tar.gz adicional, levanta MinIO primero."
@@ -206,7 +270,7 @@ update_mariachi() {
 }
 
 update_huachicol() {
-    local env_file="/home/egar/IIEG/huachicol/.env"
+    local env_file="$IIEG_ROOT/huachicol/.env"
     [ ! -f "$env_file" ] && return
     info "Actualizando $env_file (metricas SeaweedFS sin auth)..."
     sed -i -E \
@@ -220,7 +284,7 @@ update_huachicol() {
 }
 
 update_dataengine() {
-    local env_file="/home/egar/IIEG/mapalab-dataengine/.env"
+    local env_file="$IIEG_ROOT/mapalab-dataengine/.env"
     [ ! -f "$env_file" ] && return
     info "Actualizando $env_file..."
     sed -i -E \
@@ -233,8 +297,8 @@ update_dataengine() {
 }
 
 if [ "$MODE" = "gcp" ]; then
-    info "Modo GCP: actualizando .env de consumidores in-place..."
-    for f in /home/egar/IIEG/mariachi/.env.production /home/egar/IIEG/mariachi/.env.staging /home/egar/IIEG/mariachi/.env.development; do
+    info "Modo GCP: actualizando .env de consumidores in-place (raiz: $IIEG_ROOT)..."
+    for f in "$IIEG_ROOT/mariachi/.env.production" "$IIEG_ROOT/mariachi/.env.staging" "$IIEG_ROOT/mariachi/.env.development"; do
         update_mariachi "$f"
     done
     update_huachicol
@@ -246,13 +310,13 @@ if [ "$MODE" = "gcp" ]; then
     info "Ejecuta (manual, requiere docker compose en cada repo):"
     cat <<EOF
 
-  cd /home/egar/IIEG/gateway-hub && \\
+  cd $IIEG_ROOT/gateway-hub && \\
     sed -i 's|ACERVO_HOST=acervo-minio:9000|ACERVO_HOST=acervo-seaweedfs:8333|' .env.production && \\
     docker compose up -d nginx
 
-  cd /home/egar/IIEG/mariachi && docker compose up -d --force-recreate
-  cd /home/egar/IIEG/huachicol && docker compose up -d --force-recreate prometheus
-  cd /home/egar/IIEG/mapalab-dataengine && docker compose up -d --force-recreate
+  cd $IIEG_ROOT/mariachi && docker compose up -d --force-recreate
+  cd $IIEG_ROOT/huachicol && docker compose up -d --force-recreate prometheus
+  cd $IIEG_ROOT/mapalab-dataengine && docker compose up -d --force-recreate
 
   curl -I https://iieg.jalisco.gob.mx/acervo/iieg/v1/logo.svg   # smoke test
 EOF
