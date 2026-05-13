@@ -5,17 +5,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 ENV_FILE="${ENV_FILE:-.env}"
-if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
-    set -a
-    . "$PROJECT_DIR/$ENV_FILE"
-    set +a
+if [ ! -f "$PROJECT_DIR/$ENV_FILE" ]; then
+    echo "ERROR: archivo $ENV_FILE no encontrado en $PROJECT_DIR." >&2
+    echo "       Corre 'make setup' para crearlo desde .env.example y editalo con creds reales." >&2
+    exit 1
 fi
+set -a
+. "$PROJECT_DIR/$ENV_FILE"
+set +a
+
+require_var() {
+    eval "val=\${$1:-}"
+    if [ -z "$val" ]; then
+        echo "ERROR: variable $1 no esta definida en $ENV_FILE." >&2
+        exit 1
+    fi
+}
+
+require_var ACERVO_ADMIN_ACCESS_KEY
+require_var ACERVO_ADMIN_SECRET_KEY
+require_var ACERVO_BUCKETS
 
 BACKUP_DIR="${BACKUP_DIR:-/backups/acervo}"
 BACKUP_RETENTION_MONTHS="${BACKUP_RETENTION_MONTHS:-2}"
-ACERVO_ADMIN_ACCESS_KEY="${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
-ACERVO_ADMIN_SECRET_KEY="${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
-BUCKETS="${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
+BUCKETS="$ACERVO_BUCKETS"
 
 SEAWEEDFS_CONTAINER="${SEAWEEDFS_CONTAINER:-acervo-seaweedfs}"
 MC_IMAGE="${MC_IMAGE:-pgsty/mc:RELEASE.2026-04-17T00-00-00Z}"

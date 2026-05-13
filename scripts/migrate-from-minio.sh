@@ -5,17 +5,28 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 ENV_FILE="${ENV_FILE:-.env}"
-if [ -f "$PROJECT_DIR/$ENV_FILE" ]; then
-    set -a
-    . "$PROJECT_DIR/$ENV_FILE"
-    set +a
+if [ ! -f "$PROJECT_DIR/$ENV_FILE" ]; then
+    echo "ERROR: archivo $ENV_FILE no encontrado en $PROJECT_DIR." >&2
+    echo "       Corre 'make setup' para crearlo desde .env.example y editalo con creds reales." >&2
+    exit 1
 fi
+set -a
+. "$PROJECT_DIR/$ENV_FILE"
+set +a
 
-: "${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
-: "${MIGRATE_MINIO_ACCESS_KEY:?MIGRATE_MINIO_ACCESS_KEY is required (root key del MinIO viejo)}"
-: "${MIGRATE_MINIO_SECRET_KEY:?MIGRATE_MINIO_SECRET_KEY is required}"
-: "${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required (admin de SeaweedFS nuevo)}"
-: "${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
+require_var() {
+    eval "val=\${$1:-}"
+    if [ -z "$val" ]; then
+        echo "ERROR: variable $1 no esta definida en $ENV_FILE. $2" >&2
+        exit 1
+    fi
+}
+
+require_var ACERVO_BUCKETS                ""
+require_var ACERVO_ADMIN_ACCESS_KEY       "(admin de SeaweedFS nuevo)"
+require_var ACERVO_ADMIN_SECRET_KEY       ""
+require_var MIGRATE_MINIO_ACCESS_KEY      "(root key del MinIO viejo - solo durante la migracion)"
+require_var MIGRATE_MINIO_SECRET_KEY      "(root secret del MinIO viejo)"
 
 MINIO_VOLUME="${MIGRATE_MINIO_VOLUME:-acervo_minio_data}"
 MINIO_IMAGE="${MIGRATE_MINIO_IMAGE:-pgsty/minio:RELEASE.2026-04-17T00-00-00Z}"
