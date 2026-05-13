@@ -67,7 +67,7 @@ flowchart TD
     ufw[/UFW firewall<br/>SSH + 80/443 desde ALLOWED_SERVER_IPS/]
     nginx["acervo-nginx<br/>(red pública + interna)"]
     minio["acervo-minio<br/>API 9000 / Console 9001<br/>(solo red interna)"]
-    init["acervo-init (profile 'init')<br/>minio/mc"]
+    init["acervo-init (profile 'init')<br/>pgsty/mc"]
 
     internet --> ufw --> nginx
     nginx -- /console/ + /console/static/ --> minio
@@ -111,7 +111,7 @@ flowchart LR
 ## 5. Componentes
 
 ### 5.1 MinIO (`acervo-minio`)
-- Imagen: `minio/minio:latest` (no se pinea, ver §10 "Deudas").
+- Imagen: `pgsty/minio:RELEASE.2026-04-17T00-00-00Z` (fork comunitario mantenido por Pigsty; ver §10 "Deudas" para el contexto de migración desde `minio/minio`).
 - Comando: `server /data --console-address ":9001"`.
 - Volumen persistente: `minio_data` (Docker volume).
 - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` vienen de `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` del `.env`.
@@ -144,7 +144,7 @@ Se monta como `config` y corre antes de `nginx -g daemon off`. Lee dos variables
 > **Implicación**: cambiar IPs permitidas requiere `make restart-nginx` (no reload), porque el entrypoint solo corre en el arranque.
 
 ### 5.4 Init de buckets (`scripts/init-buckets.sh`, perfil `init`)
-- Imagen: `minio/mc`. Profile `init` para que no levante automáticamente con `up`.
+- Imagen: `pgsty/mc:RELEASE.2026-04-17T00-00-00Z`. Profile `init` para que no levante automáticamente con `up`.
 - Espera a MinIO (`mc alias set` en loop hasta que responda).
 - **Migraciones automáticas**:
   - `dateengine` (typo histórico) → `dataengine`: `mc mirror --remove` + remove user `dateengine-user`.
@@ -167,7 +167,7 @@ Se monta como `config` y corre antes de `nginx -g daemon off`. Lee dos variables
 - Frecuencia: mensual (cron) — ver §7.
 - Para cada bucket en `MINIO_BUCKETS`:
   - Detecta la red de `acervo-minio` con `docker inspect`.
-  - Corre un contenedor temporal `minio/mc` en esa red, monta `${MONTHLY_DIR}` y hace `mc mirror acervo/<bucket> /backup/<bucket>`.
+  - Corre un contenedor temporal `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` en esa red, monta `${MONTHLY_DIR}` y hace `mc mirror acervo/<bucket> /backup/<bucket>`.
 - Comprime todo el directorio `monthly/<DATE>/` en `monthly/backup-<DATE>.tar.gz`.
 - **Limpieza del directorio temporal**: usa un contenedor `alpine find -delete` (en lugar de `rm -rf` desde host) — el contenido pertenece al usuario root del contenedor de `mc`, no al usuario host.
 - Rotación:
@@ -300,7 +300,7 @@ Convención clave: `MINIO_BUCKETS` debe ir **entre comillas** en los `.env*` (co
 Al momento del último commit (`10f4d12`), `production` está alineada con `develop` y `main` está atrás.
 
 ### Deudas conocidas
-- **`minio/minio:latest` sin pin de versión**. Reproducible para un upgrade no anunciado. Convendría pinnear a una versión `RELEASE.YYYY-MM-DD...`.
+- **Dependencia del fork `pgsty/minio`**. Tras el archivado del repo y de las imágenes oficiales de MinIO CE (feb–abr 2026) se migró a `pgsty/minio:RELEASE.2026-04-17T00-00-00Z` y `pgsty/mc:RELEASE.2026-04-17T00-00-00Z` (commit `e45efc3`, CHANGELOG 1.21.0). Riesgos abiertos: (1) las imágenes viven en Docker Hub bajo un namespace comunitario sin SLA — pendiente mirror a Artifact Registry; (2) Pigsty incluye disclaimer de "no afiliado con MinIO Inc." y podría verse forzado a renombrar por temas de marca; (3) decisión estratégica pendiente entre quedarse en `pgsty/minio` o migrar a AIStor Free / SeaweedFS / Garage.
 - **`make cron-remove` borra todo el crontab del usuario**, no solo la entrada de acervo. Si el usuario tiene otros crons, se pierden.
 - **Backup mensual sin verificación de integridad post-tar**. No se hace un `tar -tzf` de smoke test. Si el disco falla a mitad del tar, el archivo queda corrupto y no nos enteramos hasta intentar un restore.
 - **Sin offsite backup**. Todo vive en `BACKUP_DIR` local de la VM. Pérdida de la VM = pérdida de todos los respaldos.
