@@ -4,6 +4,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.23}
     container_name: acervo-seaweedfs
+    user: "seaweed:seaweed"
     entrypoint: ["/bin/sh", "/seaweedfs-entrypoint.sh"]
     command:
       - -dir=/data
@@ -21,10 +22,11 @@ services:
       - ./config:/etc/seaweedfs:ro
       - ./scripts/seaweedfs-entrypoint.sh:/seaweedfs-entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8333/status"]
+      test: ["CMD-SHELL", "wget -qO- http://acervo-seaweedfs:9333/cluster/status | grep -q IsLeader"]
       interval: 30s
       timeout: 20s
       retries: 3
+      start_period: 30s
     networks:
       - acervo_network
       - iieg-network

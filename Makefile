@@ -9,9 +9,9 @@ ENV_FILE     := .env
 COMPOSE_CMD      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)
 COMPOSE_CMD_INIT := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --profile init
 
-.PHONY: help up build down logs restart clean shell-seaweedfs setup init-seaweedfs \
-        rotate-seaweedfs migrate-from-minio backup restore backup-list cron-install \
-        cron-remove
+.PHONY: help migrate up build down logs restart clean shell-seaweedfs setup \
+        init-seaweedfs rotate-seaweedfs backup restore backup-list \
+        cron-install cron-remove
 
 help:
 	@echo ''
@@ -19,14 +19,17 @@ help:
 	@echo ''
 	@echo 'Uso: ${YELLOW}make <comando>${RESET}'
 	@echo ''
-	@echo '${GREEN}Generales:${RESET}'
-	@echo '  ${YELLOW}up${RESET}                - Inicia el entorno en segundo plano'
-	@echo '  ${YELLOW}build${RESET}             - Reconstruye e inicia el entorno'
-	@echo '  ${YELLOW}down${RESET}              - Detiene todos los contenedores'
-	@echo '  ${YELLOW}logs${RESET}              - Muestra logs en tiempo real'
-	@echo '  ${YELLOW}restart${RESET}           - Reinicia el entorno'
+	@echo '${GREEN}Migracion (one-button):${RESET}'
+	@echo '  ${YELLOW}migrate${RESET}           - Migracion completa MinIO -> SeaweedFS, propaga creds si todos los repos estan locales'
 	@echo ''
-	@echo '${GREEN}Identidades y Buckets:${RESET}'
+	@echo '${GREEN}Lifecycle:${RESET}'
+	@echo '  ${YELLOW}up${RESET}                - Inicia el entorno en segundo plano'
+	@echo '  ${YELLOW}down${RESET}              - Detiene todos los contenedores'
+	@echo '  ${YELLOW}restart${RESET}           - Reinicia el entorno'
+	@echo '  ${YELLOW}logs${RESET}              - Muestra logs en tiempo real'
+	@echo '  ${YELLOW}setup${RESET}             - Crea archivo .env inicial'
+	@echo ''
+	@echo '${GREEN}Identidades:${RESET}'
 	@echo '  ${YELLOW}init-seaweedfs${RESET}    - Generar config/identities.json (passwords nuevas para users que no existen)'
 	@echo '  ${YELLOW}rotate-seaweedfs${RESET}  - Rotar TODAS las passwords ${WHITE}[BUCKET=nombre]${RESET}'
 	@echo ''
@@ -34,7 +37,6 @@ help:
 	@echo '  ${YELLOW}backup${RESET}            - Ejecutar respaldo manual'
 	@echo '  ${YELLOW}restore${RESET}           - Restaurar respaldo ${WHITE}(DATE=YYYY-MM-DD [BUCKET=nombre])${RESET}'
 	@echo '  ${YELLOW}backup-list${RESET}       - Listar respaldos disponibles'
-	@echo '  ${YELLOW}migrate-from-minio${RESET} - One-shot: copiar datos de un volumen MinIO viejo a SeaweedFS'
 	@echo ''
 	@echo '${GREEN}Cron:${RESET}'
 	@echo '  ${YELLOW}cron-install${RESET}      - Instalar cron de respaldos (mensual, dia 1 a las 3:00 AM)'
@@ -43,8 +45,10 @@ help:
 	@echo '${GREEN}Utilidades:${RESET}'
 	@echo '  ${YELLOW}clean${RESET}             - Elimina contenedores, redes y volumenes'
 	@echo '  ${YELLOW}shell-seaweedfs${RESET}   - Terminal del contenedor SeaweedFS'
-	@echo '  ${YELLOW}setup${RESET}             - Crea archivo .env inicial'
 	@echo ''
+
+migrate:
+	@bash scripts/migrate.sh
 
 up:
 	@echo "${GREEN}Iniciando entorno...${RESET}"
@@ -92,7 +96,7 @@ setup:
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		echo "${GREEN}Creado .env desde ejemplo${RESET}"; \
-		echo "${YELLOW}Edita .env con las credenciales reales antes de 'make init-seaweedfs'${RESET}"; \
+		echo "${YELLOW}Edita .env con las credenciales reales antes de 'make migrate'${RESET}"; \
 	else \
 		echo "${YELLOW}.env ya existe${RESET}"; \
 	fi
@@ -104,11 +108,6 @@ init-seaweedfs:
 rotate-seaweedfs:
 	@echo "${YELLOW}Rotando passwords (BUCKET=$(BUCKET))...${RESET}"
 	$(COMPOSE_CMD_INIT) run --rm -e ROTATE_FLAG=1 -e TARGET_BUCKET=$(BUCKET) acervo-init
-
-migrate-from-minio:
-	@echo "${GREEN}Iniciando migracion one-shot desde volumen MinIO...${RESET}"
-	@echo "${YELLOW}Requiere variables MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en $(ENV_FILE).${RESET}"
-	@ENV_FILE=$(ENV_FILE) bash scripts/migrate-from-minio.sh
 
 backup:
 	@echo "${GREEN}Ejecutando respaldo manual...${RESET}"
