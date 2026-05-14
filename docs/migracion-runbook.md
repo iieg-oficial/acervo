@@ -13,7 +13,7 @@ Procedimiento operativo para administración (4 VMs separadas). En GCP (todo en 
 | **S1** | Gateway + Huachicol + Acervo | `/home/egar/IIEG/acervo`, `/home/egar/IIEG/gateway-hub`, `/home/egar/IIEG/huachicol` |
 | **S2** | MapaLab (+ Mariachi*) | `/home/egar/IIEG/mapalab`, `/home/egar/IIEG/mariachi`* |
 | **S3** | GeoServer | `/home/egar/IIEG/geoserver` (no relevante para esta migración) |
-| **S4** | DataEngine | `/home/egar/IIEG/mapalab-dataengine` |
+| **S4** | DataEngine | `/home/egar/IIEG/dataengine` |
 
 \* Verifica con `docker ps` en qué VM corre `mariachi-api` antes de empezar — la propagación de credenciales tiene que pegarle ahí.
 
@@ -31,7 +31,7 @@ sequenceDiagram
     Op->>S1: 1. make migrate (genera creds, muestra valores)
     Op->>S1: 2. Edita gateway-hub/.env.production y reinicia nginx
     Op->>S2: 3. Edita mariachi/.env.production con creds del paso 1, restart
-    Op->>S4: 4. Edita mapalab-dataengine/.env con creds, restart
+    Op->>S4: 4. Edita dataengine/.env con creds, restart
     Op->>S1: 5. Smoke tests + apagar MinIO viejo
 ```
 
@@ -59,7 +59,7 @@ make migrate
 ```
 
 El script:
-1. Detecta el modo (admin porque los repos `mariachi`, `mapalab-dataengine` no están en este VM).
+1. Detecta el modo (admin porque los repos `mariachi`, `dataengine` no están en este VM).
 2. Hace `make backup` mientras MinIO sigue vivo → tar.gz en `/backups/acervo/monthly/`.
 3. Corre `make init-seaweedfs` → genera `config/identities.json` con passwords aleatorias.
 4. Levanta SeaweedFS y espera healthy.
@@ -163,11 +163,11 @@ docker compose logs -f api | grep -i acervo   # buscar errores 403/SignatureDoes
 
 ---
 
-## Paso 4 — En S4: mapalab-dataengine
+## Paso 4 — En S4: dataengine
 
 ```bash
 ssh egar@s4.iieg.example
-cd /home/egar/IIEG/mapalab-dataengine
+cd /home/egar/IIEG/dataengine
 ```
 
 Edita `.env`:
@@ -265,7 +265,7 @@ make restore DATE=YYYY-MM-DD   # del tar.gz del Paso 1.2
 - [ ] **S1**: `gateway-hub/.env.production` apunta a `acervo-seaweedfs:8333`. `make up -d nginx` aplicado.
 - [ ] **S1**: `huachicol/.env` actualizado. Prometheus reiniciado.
 - [ ] **S2**: `mariachi/.env.production` con nuevas creds. `docker compose up -d --force-recreate` corrido.
-- [ ] **S4**: `mapalab-dataengine/.env` con nuevas creds. Restart.
+- [ ] **S4**: `dataengine/.env` con nuevas creds. Restart.
 - [ ] Smoke tests: anonymous GET responde, mariachi/dataengine sin errores 403 en logs.
 - [ ] (24-72h después) MinIO viejo apagado, volumen liberado.
 

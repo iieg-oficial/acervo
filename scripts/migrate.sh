@@ -46,7 +46,7 @@ fi
 CONSUMER_REPOS=(
     "$IIEG_ROOT/mariachi"
     "$IIEG_ROOT/huachicol"
-    "$IIEG_ROOT/mapalab-dataengine"
+    "$IIEG_ROOT/dataengine"
     "$IIEG_ROOT/gateway-hub"
 )
 
@@ -284,7 +284,7 @@ update_huachicol() {
 }
 
 update_dataengine() {
-    local env_file="$IIEG_ROOT/mapalab-dataengine/.env"
+    local env_file="$IIEG_ROOT/dataengine/.env"
     [ ! -f "$env_file" ] && return
     info "Actualizando $env_file..."
     sed -i -E \
@@ -293,7 +293,7 @@ update_dataengine() {
         -e 's|^AO_ACCESS_KEY=.*|AO_ACCESS_KEY=dataengine-user|' \
         -e "s|^AO_SECRET_KEY=.*|AO_SECRET_KEY=${SECRETS[dataengine]}|" \
         "$env_file"
-    ok "mapalab-dataengine/.env actualizado"
+    ok "dataengine/.env actualizado"
 }
 
 if [ "$MODE" = "gcp" ]; then
@@ -316,7 +316,7 @@ if [ "$MODE" = "gcp" ]; then
 
   cd $IIEG_ROOT/mariachi && docker compose up -d --force-recreate
   cd $IIEG_ROOT/huachicol && docker compose up -d --force-recreate prometheus
-  cd $IIEG_ROOT/mapalab-dataengine && docker compose up -d --force-recreate
+  cd $IIEG_ROOT/dataengine && docker compose up -d --force-recreate
 
   curl -I https://iieg.jalisco.gob.mx/acervo/iieg/v1/logo.svg   # smoke test
 EOF

@@ -11,6 +11,12 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.22.1] - 2026-05-14
+
+### Renombrado del repositorio `mapalab-dataengine` → `dataengine`
+
+Se actualizaron las referencias al repo `dataengine` (antes `mapalab-dataengine`) en `docs/migracion-runbook.md` y `scripts/migrate.sh`.
+
 ## [1.22.0] - 2026-05-13
 
 ### Cambios mayores
