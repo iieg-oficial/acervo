@@ -11,6 +11,31 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.22.4] - 2026-05-15
+
+### Docs alineados: `MinIO` ya no se menciona; todo es `Acervo`
+
+#### Removido
+
+- **`docs/migracion-runbook.md`**: borrado. El runbook era one-shot; la migración a SeaweedFS ya se ejecutó y los pasos quedaron documentados en la entrada `1.22.0` de este CHANGELOG. Cualquier rollback sigue siendo factible desde el tag `v1.21.2`.
+
+#### Cambiado
+
+- **`docs/context.md`**:
+  - Sección "Diferencias clave vs MinIO" reescrita como "Características relevantes para operar" sin la comparativa histórica.
+  - Sección 4.3 "Migración one-shot desde MinIO" eliminada (script `migrate-from-minio.sh` se conserva en `scripts/` para auditoría pero no se documenta como flujo activo).
+  - Sección 5.7 "El cliente `mc` se mantiene": se quita la fórmula "aunque migramos del servidor MinIO"; ahora dice directo "`mc` es nuestra herramienta para `mirror`, `ls`, `mb`, etc.".
+  - Variables `MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY/VOLUME` removidas de la tabla "Variables de entorno principales".
+  - Deudas conocidas: comparativa "Mismo riesgo que se tenía con `pgsty/minio`" simplificada a "si Docker Hub borra la imagen..."; última deuda reescrita sin mencionar "ecosistema MinIO".
+- **`docs/politica-respaldos.md`**: "cliente `mc` (MinIO Client, compatible con cualquier servidor S3-compatible)" → "cliente `mc` (S3-compatible)".
+- **`scripts/migrate.sh`**: el ref interno al runbook (borrado) ahora apunta a `docs/CHANGELOG.md (entrada 1.22.0)`.
+
+#### Notas
+
+- Las menciones a "MinIO" que sobreviven están solo en `CHANGELOG.md` (historial intencional, no se toca) y en la nota de cabecera `> Última reescritura mayor: 2026-05-13 (migración de MinIO → SeaweedFS...)` del `context.md`, donde el contexto histórico es útil para entender por qué el repo tiene la forma actual.
+
+---
+
 ## [1.22.3] - 2026-05-15
 
 ### Runbook ajustado a los nuevos verbos `make` del gateway-hub

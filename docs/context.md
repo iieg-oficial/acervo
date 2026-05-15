@@ -55,11 +55,11 @@ flowchart LR
     prom -- scrape :9091/metrics --> seaweed
 ```
 
-**Diferencias clave vs MinIO**:
-- SeaweedFS no tiene consola embebida tipo "MinIO Browser". Admin se hace via S3 API (mc, rclone) o via `weed shell` desde dentro del contenedor.
+**Caracteristicas relevantes para operar**:
+- Acervo (SeaweedFS) no expone consola web. Admin se hace via S3 API (`mc`, `rclone`) o via `weed shell` desde dentro del contenedor.
 - El endpoint de métricas Prometheus es **público en red interna** sin auth (puerto `9091`), separado del puerto de la S3 API.
-- Las identidades no son "users + policies + anonymous separados". Son una lista única en `config/identities.json` con un identity por consumidor.
-- `MINIO_SERVER_URL` y `MINIO_BROWSER_REDIRECT_URL` no aplican. SeaweedFS no requiere config de URL pública para que sigv4 funcione.
+- Las identidades viven en una lista única en `config/identities.json` con un identity por consumidor (lista plana, sin abstracciones de "users + policies + anonymous" separadas).
+- No requiere config de URL pública (variables tipo `*_SERVER_URL` / `*_BROWSER_REDIRECT_URL`); sigv4 funciona contra el endpoint local.
 
 ---
 
@@ -88,15 +88,7 @@ flowchart LR
 - Passwords se imprimen solo cuando se generan. Si se pierden, el único camino es rotación.
 - Tras correr el init, **hay que reiniciar SeaweedFS** (`make restart`) para que cargue el `identities.json` actualizado. SeaweedFS lee el archivo al startup, no en caliente.
 
-### 4.3 Migración one-shot desde MinIO (`scripts/migrate-from-minio.sh`)
-- Script de migración única, se conserva en el repo para fines de auditoría aunque solo se corra una vez.
-- Detecta el volumen Docker `acervo_minio_data` (sobrevivido del bump 1.21.x).
-- Levanta un contenedor `pgsty/minio` efímero contra ese volumen, lo conecta a la red de SeaweedFS, corre `mc mirror` por bucket.
-- Verifica conteo de objetos en ambos lados al final.
-- Variables requeridas: `MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY` (las viejas, root de MinIO). El admin de destino lo toma de `ACERVO_ADMIN_*`.
-- **No es idempotente respecto a deltas concurrentes**: si MinIO sigue recibiendo escrituras durante la corrida, esos objetos pueden quedar fuera. Recomendado parar consumidores que escriben (`mariachi`, `dataengine`) antes de correr.
-
-### 4.4 Backup (`scripts/backup.sh`)
+### 4.3 Backup (`scripts/backup.sh`)
 - Frecuencia: mensual (cron) — ver §6.
 - Para cada bucket en `ACERVO_BUCKETS`:
   - Detecta la red de `acervo-seaweedfs` con `docker inspect`.
@@ -129,19 +121,19 @@ Por default SeaweedFS expone la S3 API sin auth. La protección está en `script
 A diferencia de los `<bucket>-user` (passwords aleatorias generadas por el init), las credenciales del identity `admin` vienen de `ACERVO_ADMIN_ACCESS_KEY/SECRET_KEY` del `.env`. Esto es deliberado: el admin es la cuenta de operación humana, no rotada automáticamente. Para rotarla, edita el `.env`, corre `make init-seaweedfs` y reinicia.
 
 ### 5.3 El init NO se conecta al servidor SeaweedFS
-A diferencia del viejo `init-buckets.sh` (que hablaba con MinIO via `mc`), `init-seaweedfs.sh` solo escribe `config/identities.json` en disco. SeaweedFS lee el archivo en su próximo arranque. Por eso el flujo correcto es: `make init-seaweedfs` → `make restart`.
+`init-seaweedfs.sh` solo escribe `config/identities.json` en disco. SeaweedFS lee el archivo en su próximo arranque. Por eso el flujo correcto es: `make init-seaweedfs` → `make restart`.
 
 ### 5.4 Los buckets se crean implícitamente al primer `PUT` o `mc mb`
 SeaweedFS no requiere "crear" un bucket de antemano para que un identity con `Write:<bucket>` lo pueda usar. El primer `PUT` materializa el bucket. El script de migración corre `mc mb new/<bucket> --ignore-existing` por buena medida.
 
 ### 5.5 Las métricas Prometheus están sin auth en red interna
-SeaweedFS expone `/metrics` en `-metricsPort=9091` sin token. La protección es de red: solo contenedores en `iieg-network` pueden llegar al puerto. El scrape de huachicol pasa de `http://acervo-minio:9000/minio/v2/metrics/...` con bearer a `http://acervo-seaweedfs:9091/metrics` sin auth.
+SeaweedFS expone `/metrics` en `-metricsPort=9091` sin token. La protección es de red: solo contenedores en `iieg-network` pueden llegar al puerto. El scrape de huachicol apunta a `http://acervo-seaweedfs:9091/metrics`.
 
 ### 5.6 `docker inspect` para detectar la red de SeaweedFS
 Tanto `backup.sh` como `restore.sh` derivan la red en runtime (`docker inspect acervo-seaweedfs -f '{{range ...}}'`). Esto sobrevive renombres y cambios de proyecto compose. No hardcodear el nombre de la red.
 
 ### 5.7 El cliente `mc` se mantiene como herramienta de admin/backup
-Aunque migramos del **servidor** MinIO a SeaweedFS, `mc` (el CLI de MinIO) sigue siendo nuestra herramienta para `mirror`, `ls`, `mb`, etc. porque habla S3 nativo y maneja sigv4 bien. La imagen pineada es `pgsty/mc:RELEASE.2026-04-17T00-00-00Z`. Si `pgsty/mc` se vuelve inestable, se puede sustituir por `rclone/rclone` (sintaxis distinta pero equivalente).
+`mc` es nuestra herramienta para `mirror`, `ls`, `mb`, etc. contra Acervo porque habla S3 nativo y maneja sigv4 bien. La imagen pineada es `pgsty/mc:RELEASE.2026-04-17T00-00-00Z`. Si `pgsty/mc` se vuelve inestable, se puede sustituir por `rclone/rclone` (sintaxis distinta pero equivalente).
 
 ### 5.8 Eliminación del modo standalone como decisión consciente
 El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando producción servía la S3 API en un subdominio dedicado (`s3.jalisco.gob.mx`). Desde 1.18.x todo va por `iieg.jalisco.gob.mx/acervo/*` via gateway. Mantener standalone como modo dormido tenía costo: dos compose files, certs autofirmados, scripts de firewall, entrypoint dinámico de Nginx con dos plantillas. Borrarlo libera ~60% del código del repo y enfoca la atención.
@@ -174,8 +166,6 @@ El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando pr
 | `ACERVO_PUBLIC_BUCKETS` | Subconjunto que recibe anonymous GetObject. Default `portal mapalab iieg`. |
 | `BACKUP_DIR` | Directorio destino de backups (default `/backups/acervo`). |
 | `BACKUP_RETENTION_MONTHS` | Meses a conservar (default 2). |
-| `MIGRATE_MINIO_ACCESS_KEY` / `MIGRATE_MINIO_SECRET_KEY` | Solo durante migración one-shot. Se borran después. |
-| `MIGRATE_MINIO_VOLUME` | Nombre del volumen Docker viejo (default `acervo_minio_data`). |
 
 Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre comillas** en los `.env*` (commit `5be8721`), porque docker compose no parsea espacios en valores sin comillas.
 
@@ -197,14 +187,14 @@ Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre c
 - `v1.21.2` — último estado pre-migración a SeaweedFS. Punto de rollback canónico si la migración falla irreversiblemente.
 
 ### Deudas conocidas
-- **`chrislusf/seaweedfs:4.23` solo en Docker Hub**. Mismo riesgo que se tenía con `pgsty/minio`: si Docker Hub borra la imagen o cambia el namespace, el siguiente `make up` rompe. Pendiente: mirror a Artifact Registry de GCP.
+- **`chrislusf/seaweedfs:4.23` solo en Docker Hub**. Si Docker Hub borra la imagen o cambia el namespace, el siguiente `make up` rompe. Pendiente: mirror a Artifact Registry de GCP.
 - **`make cron-remove` borra todo el crontab del usuario**, no solo la entrada de acervo. Si el usuario tiene otros crons, se pierden.
 - **Backup mensual sin verificación de integridad post-tar**. No se hace un `tar -tzf` de smoke test. Si el disco falla a mitad del tar, el archivo queda corrupto y no nos enteramos hasta intentar un restore.
 - **Sin offsite backup**. Todo vive en `BACKUP_DIR` local de la VM. Pérdida de la VM = pérdida de todos los respaldos.
 - **`.env` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.env.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
 - **`develop` está 18+ commits atrás de `production`**. Históricamente se ha mergeado directo a production. No es un problema funcional, pero implica que `develop` no refleja la verdad operativa.
 - **Endpoint `/ontoy` retirado**. Hasta 1.21.2 lo servía el Nginx interno de standalone. En modo gateway nunca llegó a haber una versión funcionando. Si monitoreo lo necesita, agregar un sidecar `nginx:alpine` que sirva `version.json` en un puerto interno + ruta en gateway.
-- **`mc` (cliente MinIO) sigue como dependencia para backup/restore**. Pragmático pero acopla. Alternativa: migrar a `rclone` que también es Apache 2.0 y no depende del ecosistema MinIO.
+- **`mc` sigue como dependencia para backup/restore**. Pragmático pero acopla a un binario externo. Alternativa: migrar a `rclone` (Apache 2.0, sintaxis distinta pero equivalente).
 
 ---
 
