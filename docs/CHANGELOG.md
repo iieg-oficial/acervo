@@ -11,6 +11,30 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.22.3] - 2026-05-15
+
+### Runbook ajustado a los nuevos verbos `make` del gateway-hub
+
+#### Cambiado
+
+- **`docs/migracion-runbook.md`** (checklist condensado, paso S1): el chequeo "`make up -d nginx` aplicado" se reescribe a "`make deploy` (o `docker compose up -d --build`) aplicado". Razon: en `gateway-hub 1.24.20`, `make up` deja de rebuildear y `make deploy` toma ese rol. El comando anterior tampoco era valido (`make up -d nginx` mezclaba `make` con flags `docker compose`).
+
+---
+
+## [1.22.2] - 2026-05-15
+
+### Limpieza de docs obsoletos de la consola MinIO
+
+#### Removido
+
+- **`docs/creacion-buckets-consola.md`** y **`docs/eliminacion-buckets-consola.md`**: ambas guias describian el flujo "via interfaz web de MinIO" (`https://...acervo/console/`). La consola web se elimino del gateway en `gateway-hub 1.24.10` y nunca tuvo equivalente en SeaweedFS (no expone Filer UI propia con auth). El flujo actual de gestion de buckets/usuarios vive en `scripts/init-seaweedfs.sh` + `config/identities.json` + `make restart` (ya documentado en `docs/context.md` y en el README).
+
+#### Cambiado
+
+- **`docs/politica-respaldos.md`**: paso 1 de "Como se guardan" reescrito: ya no dice "Se conecta a MinIO" sino "endpoint S3 de Acervo (SeaweedFS) usando `mc` (cliente S3-compatible)". Buckets ejemplo actualizados a la lista real post-migracion (`portal`, `mapalab`, `mariachi`, `iieg`, `sieej`).
+
+---
+
 ## [1.22.1] - 2026-05-14
 
 ### Renombrado del repositorio `mapalab-dataengine` → `dataengine`

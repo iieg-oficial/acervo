@@ -13,6 +13,7 @@ services:
       - -s3.port=8333
       - -metricsPort=9091
       - -ip.bind=0.0.0.0
+      - -volume.max=100
     ports:
       - "${ACERVO_S3_PORT:-8333}:8333"
     environment:

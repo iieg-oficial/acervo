@@ -262,7 +262,7 @@ make restore DATE=YYYY-MM-DD   # del tar.gz del Paso 1.2
 
 - [ ] Tag `v1.21.2` existe en GitHub.
 - [ ] **S1**: `make migrate` corre limpio. Creds nuevas guardadas.
-- [ ] **S1**: `gateway-hub/.env.production` apunta a `acervo-seaweedfs:8333`. `make up -d nginx` aplicado.
+- [ ] **S1**: `gateway-hub/.env.production` apunta a `acervo-seaweedfs:8333`. `make deploy` (o `docker compose up -d --build`) aplicado.
 - [ ] **S1**: `huachicol/.env` actualizado. Prometheus reiniciado.
 - [ ] **S2**: `mariachi/.env.production` con nuevas creds. `docker compose up -d --force-recreate` corrido.
 - [ ] **S4**: `dataengine/.env` con nuevas creds. Restart.
