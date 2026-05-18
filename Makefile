@@ -11,7 +11,7 @@ COMPOSE_CMD_INIT := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) --p
 
 .PHONY: help migrate up build down logs restart clean shell-seaweedfs setup \
         init-seaweedfs rotate-seaweedfs backup restore backup-list \
-        cron-install cron-remove
+        cron-install cron-remove version-json
 
 help:
 	@echo ''
@@ -45,18 +45,27 @@ help:
 	@echo '${GREEN}Utilidades:${RESET}'
 	@echo '  ${YELLOW}clean${RESET}             - Elimina contenedores, redes y volumenes'
 	@echo '  ${YELLOW}shell-seaweedfs${RESET}   - Terminal del contenedor SeaweedFS'
+	@echo '  ${YELLOW}version-json${RESET}      - Regenerar version-api/html/version.json desde VERSION'
 	@echo ''
 
 migrate:
 	@bash scripts/migrate.sh
 
-up:
+up: version-json
 	@echo "${GREEN}Iniciando entorno...${RESET}"
 	$(COMPOSE_CMD) up -d
 
-build:
+build: version-json
 	@echo "${GREEN}Reconstruyendo entorno...${RESET}"
 	$(COMPOSE_CMD) up -d --build
+
+version-json:
+	@SERVICE=acervo; \
+	 VERSION=$$(tr -d '[:space:]' < VERSION); \
+	 RELEASED_AT=$$(grep -m1 "^## \[$$VERSION\]" docs/CHANGELOG.md | sed -E 's/^## \[[^]]+\] - ([0-9-]+).*/\1/'); \
+	 if [ -z "$$RELEASED_AT" ]; then echo "WARN: no se encontro entrada '## [$$VERSION] - YYYY-MM-DD' en docs/CHANGELOG.md" >&2; fi; \
+	 printf '{"version":"%s","service":"%s","released_at":"%s"}\n' "$$VERSION" "$$SERVICE" "$$RELEASED_AT" > version-api/html/version.json; \
+	 echo "version.json -> $$VERSION ($$SERVICE, $$RELEASED_AT)"
 
 down:
 	@echo "${YELLOW}Deteniendo entorno...${RESET}"

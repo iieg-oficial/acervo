@@ -15,3 +15,5 @@ credentials/
 *.tar.gz
 backups/
 restore/*.tar.gz
+
+version-api/html/version.json

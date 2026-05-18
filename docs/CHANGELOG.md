@@ -11,6 +11,22 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.23.0] - 2026-05-18
+
+### Endpoint `/ontoy` via sidecar `version-api`
+
+Hasta ahora el repo no exponia ningun endpoint de version: `mariachi` mostraba `1.20.1` hardcoded en `platforms_config.py` (deprecado al cambiar a 1.22.x) y `gateway-hub` respondia con un `return 200` tambien hardcoded en su `gateway.conf.template`. Cada release del Acervo obligaba a editar a mano esos dos archivos en repos ajenos.
+
+#### Agregado
+
+- **`version-api/`**: container sidecar (`python:3.13-alpine` + `ontoy_server.py` 47 lineas stdlib, sin deps) que sirve `GET /ontoy` en puerto interno `8088`. Mismo patron que `dataengine/jobs/ontoy_server.py` y `geoserver/version-api/`.
+- **`docker-compose.yml`**: servicio `version-api` conectado solo a `iieg-network`. Monta `./VERSION` y `./version-api/html/version.json` read-only. Healthcheck contra `http://127.0.0.1:8088/ontoy`.
+- **`Makefile`**: target `version-json` que regenera `version-api/html/version.json` leyendo `VERSION` y la fecha de `docs/CHANGELOG.md`. Hookeado a `up` y `build` como prerequisito (restart depende de down+up).
+
+#### Notas
+
+`gateway-hub` debe actualizarse en paralelo para que `/acervo/ontoy` deje de responder con el hardcode `1.20.1` y haga `proxy_pass` a `acervo-version-api:8088/ontoy`; `mariachi` debe eliminar el `static_version: "1.22.4"` de `acervo` en `platforms_config.py`.
+
 ## [1.22.4] - 2026-05-15
 
 ### Docs alineados: `MinIO` ya no se menciona; todo es `Acervo`
