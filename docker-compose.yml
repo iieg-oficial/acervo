@@ -2,7 +2,7 @@ name: acervo
 
 services:
   seaweedfs:
-    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.23}
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:?}
     container_name: acervo-seaweedfs
     user: "seaweed:seaweed"
     entrypoint: ["/bin/sh", "/seaweedfs-entrypoint.sh"]
@@ -15,7 +15,7 @@ services:
       - -ip.bind=0.0.0.0
       - -volume.max=100
     ports:
-      - "${ACERVO_S3_PORT:-8333}:8333"
+      - "${ACERVO_S3_PORT:?}:8333"
     environment:
       WEED_LEVELDB2_ENABLED: "true"
     volumes:
@@ -67,11 +67,11 @@ services:
       - ./config:/etc/seaweedfs
     environment:
       ACERVO_BUCKETS: "${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
-      ACERVO_PUBLIC_BUCKETS: "${ACERVO_PUBLIC_BUCKETS:-portal mapalab iieg}"
+      ACERVO_PUBLIC_BUCKETS: "${ACERVO_PUBLIC_BUCKETS:?}"
       ACERVO_ADMIN_ACCESS_KEY: "${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
       ACERVO_ADMIN_SECRET_KEY: "${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
-      ROTATE_FLAG: "${ROTATE_FLAG:-0}"
-      TARGET_BUCKET: "${TARGET_BUCKET:-}"
+      ROTATE_FLAG: "${ROTATE_FLAG}"
+      TARGET_BUCKET: "${TARGET_BUCKET}"
     restart: "no"
 
 volumes:

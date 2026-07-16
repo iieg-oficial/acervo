@@ -11,6 +11,17 @@ de MinIO. A partir de ahi cada `feat` dispara un bump minor y cada
 
 ## [No publicado]
 
+## [1.23.1] - 2026-07-16
+
+### Refactor: eliminar defaults inline del compose
+
+Sin cambios de runtime del servicio.
+
+#### Cambiado
+
+- **`docker-compose.yml`**: eliminados los defaults inline `${VAR:-valor}`. `SEAWEEDFS_VERSION`, `ACERVO_S3_PORT` y `ACERVO_PUBLIC_BUCKETS` pasan a obligatorios (`${VAR:?}`); `ROTATE_FLAG`/`TARGET_BUCKET` (rotación one-shot) quedan opcionales.
+- **`.env.example`**: documentados `ROTATE_FLAG` y `TARGET_BUCKET`.
+
 ## [1.23.0] - 2026-05-18
 
 ### Endpoint `/ontoy` via sidecar `version-api`
