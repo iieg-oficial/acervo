@@ -57,14 +57,14 @@ make up
 make migrate-from-minio
 ```
 
-Detalles completos: `docs/CHANGELOG.md` (1.22.0).
+Detalles completos: `docs/changelog/v1.md` (1.22.0).
 
 ## Documentación
 
 | Archivo | Contenido |
 |--------|-----------|
 | `docs/context.md` | Contexto técnico completo: arquitectura, componentes, decisiones de diseño |
-| `docs/CHANGELOG.md` | Historial de cambios |
+| `docs/changelog/` | Historial de cambios, individualizado por versión mayor (`v1.md`, `v2.md`); índice en `README.md` |
 | `docs/politica-respaldos.md` | Política operativa de respaldos |
 
 ## Comandos

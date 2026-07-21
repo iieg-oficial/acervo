@@ -62,8 +62,10 @@ build: version-json
 version-json:
 	@SERVICE=acervo; \
 	 VERSION=$$(tr -d '[:space:]' < VERSION); \
-	 RELEASED_AT=$$(grep -m1 "^## \[$$VERSION\]" docs/CHANGELOG.md | sed -E 's/^## \[[^]]+\] - ([0-9-]+).*/\1/'); \
-	 if [ -z "$$RELEASED_AT" ]; then echo "WARN: no se encontro entrada '## [$$VERSION] - YYYY-MM-DD' en docs/CHANGELOG.md" >&2; fi; \
+	 MAJOR=$${VERSION%%.*}; \
+	 CHANGELOG=docs/changelog/v$$MAJOR.md; \
+	 RELEASED_AT=$$(grep -m1 "^## \[$$VERSION\]" $$CHANGELOG | sed -E 's/^## \[[^]]+\] - ([0-9-]+).*/\1/'); \
+	 if [ -z "$$RELEASED_AT" ]; then echo "WARN: no se encontro entrada '## [$$VERSION] - YYYY-MM-DD' en $$CHANGELOG" >&2; fi; \
 	 printf '{"version":"%s","service":"%s","released_at":"%s"}\n' "$$VERSION" "$$SERVICE" "$$RELEASED_AT" > version-api/html/version.json; \
 	 echo "version.json -> $$VERSION ($$SERVICE, $$RELEASED_AT)"
 

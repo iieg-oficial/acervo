@@ -47,10 +47,13 @@ flowchart LR
     gw["gateway-hub<br/>(otro repo, otra red)"]
     iiegnet[("iieg-network<br/>(external)")]
     seaweed["acervo-seaweedfs<br/>S3 :8333 / metrics :9091"]
+    versionapi["acervo-version-api<br/>GET /ontoy :8088"]
     init["acervo-init (profile 'init')<br/>alpine + jq"]
     prom["prometheus<br/>(huachicol)"]
 
-    gw -- /acervo/* --> iiegnet --> seaweed
+    gw -- /acervo/* --> iiegnet
+    iiegnet --> seaweed
+    iiegnet -- /acervo/ontoy --> versionapi
     init -. genera config/identities.json .-> seaweed
     prom -- scrape :9091/metrics --> seaweed
 ```
@@ -108,6 +111,18 @@ flowchart LR
 - Extrae el tar a un `mktemp -d`, hace `mc mirror /restore/<bucket> acervo/<bucket> --overwrite` por bucket.
 - Si el bucket no está en el tar, lo saltea con un `WARNING`.
 
+### 4.6 Sidecar de versión / endpoint `/ontoy` (`acervo-version-api`)
+- Imagen: build local de `version-api/` (`python:3.13-alpine` + `ontoy_server.py`, solo stdlib, sin dependencias).
+- Sirve `GET /ontoy` en el puerto interno `8088`, conectado **solo** a `iieg-network` (no publica puertos al host). El gateway hace `proxy_pass` de `iieg.jalisco.gob.mx/acervo/ontoy` → `acervo-version-api:8088/ontoy`.
+- Monta read-only: `./VERSION`, `./version-api/html/version.json`, `/var/run/docker.sock` y `/` (como `/host-root`).
+- El payload agrega `version` + `service` + `released_at` (de `version.json`), `deployed_at` (mtime del archivo) y un bloque `checks`:
+  - `disk`: uso de `ONTOY_DISK_PATH` (`/host-root`), con umbrales `degraded` ≥85% y `down` ≥95%.
+  - `containers`: lista los contenedores del proyecto compose `acervo` (filtrado por label `com.docker.compose.project`) vía el docker socket; marca `degraded` si alguno no está `running`/`created` y `down` si alguno está `unhealthy`.
+  - Opcionalmente `ONTOY_DEPENDENCIES` (checks HTTP) y `ONTOY_PORT_CHECKS` (checks TCP) si se definen en el `environment`.
+- `status` global = peor severidad de todos los checks (`ok` < `degraded` < `down`). El HTTP responde `200` salvo cuando el status es `down`, donde responde `503`.
+- Healthcheck del contenedor: `GET http://127.0.0.1:8088/ontoy`.
+- `version.json` lo regenera el target `make version-json` (leyendo `VERSION` + la fecha del release en `docs/changelog/v<MAJOR>.md`), hookeado como prerequisito de `make up` y `make build`. Mismo patrón de sidecar que `dataengine` y `geoserver` en el ecosistema.
+
 ---
 
 ## 5. Decisiones de diseño que duelen al modificar
@@ -137,6 +152,9 @@ Tanto `backup.sh` como `restore.sh` derivan la red en runtime (`docker inspect a
 
 ### 5.8 Eliminación del modo standalone como decisión consciente
 El modo standalone (Nginx propio + UFW + cert autofirmado) era válido cuando producción servía la S3 API en un subdominio dedicado (`s3.jalisco.gob.mx`). Desde 1.18.x todo va por `iieg.jalisco.gob.mx/acervo/*` via gateway. Mantener standalone como modo dormido tenía costo: dos compose files, certs autofirmados, scripts de firewall, entrypoint dinámico de Nginx con dos plantillas. Borrarlo libera ~60% del código del repo y enfoca la atención.
+
+### 5.9 El sidecar `/ontoy` monta el docker socket read-only
+`acervo-version-api` necesita `/var/run/docker.sock:ro` para listar el estado de los contenedores del proyecto y `/:/host-root:ro` para medir el disco del host. Es un montaje sensible (el socket, aun en `:ro`, da visibilidad del daemon), acotado a que el sidecar solo vive en `iieg-network` y no publica puertos al host. Filtra por `com.docker.compose.project=acervo`, así que no expone contenedores de otros proyectos. Si se endurece el acceso al socket, hay que preservar el filtrado por proyecto y el modo read-only.
 
 ---
 
@@ -174,9 +192,10 @@ Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre c
 ## 8. Versionado, ramas y deudas
 
 ### Versionado
-- `VERSION` es la fuente de verdad. Cada `feat` → minor, `fix`/`perf`/`refactor`/`chore`/`docs` → patch.
+- `VERSION` es la fuente de verdad. Cada `feat` → minor, `fix`/`perf`/`refactor`/`chore`/`docs` → patch. Un bump **mayor** marca un hito/corte de compatibilidad.
 - Conventional commits (regla de proyecto IIEG).
-- `1.0.0` marcó la salida a producción inicial; hoy va por `1.22.0` (migración a SeaweedFS).
+- `1.0.0` marcó la salida a producción inicial (MinIO); la migración a SeaweedFS fue `1.22.0` y el sidecar `/ontoy` llegó en `1.23.0`. **`2.0.0`** consolida la etapa madura (SeaweedFS estable + `/ontoy` v2 + gestión administrable vía schema `acervo` y UI de buckets en `mariachi`).
+- El changelog está **individualizado por versión mayor** en `docs/changelog/` (`v1.md`, `v2.md`) con índice en `docs/changelog/README.md`; `docs/CHANGELOG.md` quedó como puntero.
 
 ### Ramas
 - `main` — tracking upstream.
@@ -193,7 +212,6 @@ Convención clave: `ACERVO_BUCKETS` y `ACERVO_PUBLIC_BUCKETS` deben ir **entre c
 - **Sin offsite backup**. Todo vive en `BACKUP_DIR` local de la VM. Pérdida de la VM = pérdida de todos los respaldos.
 - **`.env` con credenciales reales está en el árbol de trabajo local**. El `.gitignore` lo cubre (`*.env*` + whitelist solo de `.env.example`), pero hay que tener cuidado al copiar archivos o hacer dumps.
 - **`develop` está 18+ commits atrás de `production`**. Históricamente se ha mergeado directo a production. No es un problema funcional, pero implica que `develop` no refleja la verdad operativa.
-- **Endpoint `/ontoy` retirado**. Hasta 1.21.2 lo servía el Nginx interno de standalone. En modo gateway nunca llegó a haber una versión funcionando. Si monitoreo lo necesita, agregar un sidecar `nginx:alpine` que sirva `version.json` en un puerto interno + ruta en gateway.
 - **`mc` sigue como dependencia para backup/restore**. Pragmático pero acopla a un binario externo. Alternativa: migrar a `rclone` (Apache 2.0, sintaxis distinta pero equivalente).
 
 ---
@@ -208,7 +226,7 @@ sequenceDiagram
     participant Seaweed as SeaweedFS
 
     Dev->>Repo: feat/fix con conventional commit
-    Dev->>Repo: bump VERSION + entrada en CHANGELOG.md
+    Dev->>Repo: bump VERSION + entrada en docs/changelog/v<MAJOR>.md
     Dev->>Repo: tag vX.Y.Z (anotado)
     Dev->>Prod: ssh + git pull + git checkout vX.Y.Z
     Prod->>Prod: make up (compose recreate si cambia env/imagen)
@@ -219,7 +237,7 @@ sequenceDiagram
 
 ## 10. Cosas que NO hay en este repo (pero hay que saber)
 
-- **El gateway externo** (`gateway-hub`) vive en otro repo. Acervo solo expone su contenedor en la red `iieg-network`; el routing `/acervo/*` lo hace el gateway.
+- **El gateway externo** (`gateway-hub`) vive en otro repo. Acervo solo expone sus contenedores en la red `iieg-network`; el routing `/acervo/*` lo hace el gateway, incluido `/acervo/ontoy` → `acervo-version-api:8088`.
 - **Los clientes** (portal, mapalab, mariachi, sieej, dataengine, iieg, huachicol) viven cada uno en su repo y consumen acervo usando las credenciales `<bucket>-user` que entrega `init-seaweedfs.sh`.
 - **El monitoreo** (Prometheus/Grafana). Tras 1.22.0 el scrape es directo a `http://acervo-seaweedfs:9091/metrics` sin auth en `iieg-network`. El repo que consume las métricas es `huachicol`.
 - **El proceso de rotación de credenciales** se hace con `make rotate-seaweedfs [BUCKET=...]`. Las nuevas passwords se imprimen una vez; pasarlas al `.env.production` de cada cliente (variables `ACERVO_<REF>_SECRET_KEY`) es trabajo manual.
