@@ -46,9 +46,15 @@ services:
     build: ./version-api
     container_name: acervo-version-api
     restart: unless-stopped
+    environment:
+      ONTOY_SERVICE: acervo
+      ONTOY_COMPOSE_PROJECT: acervo
+      ONTOY_DISK_PATH: /host-root
     volumes:
       - ./VERSION:/app/VERSION:ro
       - ./version-api/html/version.json:/app/version.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host-root:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/ontoy').read()"]
       interval: 30s
