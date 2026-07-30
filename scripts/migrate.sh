@@ -298,7 +298,7 @@ update_dataengine() {
 
 if [ "$MODE" = "gcp" ]; then
     info "Modo GCP: actualizando .env de consumidores in-place (raiz: $IIEG_ROOT)..."
-    for f in "$IIEG_ROOT/mariachi/.env.production" "$IIEG_ROOT/mariachi/.env.staging" "$IIEG_ROOT/mariachi/.env.development"; do
+    for f in "$IIEG_ROOT/mariachi/.env.production" "$IIEG_ROOT/mariachi/.env.development"; do
         update_mariachi "$f"
     done
     update_huachicol
