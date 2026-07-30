@@ -1,5 +1,16 @@
 name: acervo
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-healthcheck: &healthcheck
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
 services:
   seaweedfs:
     image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:?}
@@ -15,7 +26,7 @@ services:
       - -ip.bind=0.0.0.0
       - -volume.max=100
     ports:
-      - "${ACERVO_S3_PORT:?}:8333"
+      - "${ACERVO_S3_BIND_ADDR:?}:${ACERVO_S3_PORT:?}:8333"
     environment:
       WEED_LEVELDB2_ENABLED: "true"
     volumes:
@@ -23,10 +34,9 @@ services:
       - ./config:/etc/seaweedfs:ro
       - ./scripts/seaweedfs-entrypoint.sh:/seaweedfs-entrypoint.sh:ro
     healthcheck:
+      <<: *healthcheck
       test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status | grep -q IsLeader"]
-      interval: 30s
       timeout: 20s
-      retries: 3
       start_period: 30s
     networks:
       - acervo_network
@@ -36,11 +46,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *logging
 
   version-api:
     build: ./version-api
@@ -55,12 +61,11 @@ services:
       - ./version-api/html/version.json:/app/version.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
+      <<: *healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/ontoy').read()"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
     networks:
       - iieg-network
+    logging: *logging
 
   acervo-init:
     profiles: ["init"]
@@ -71,13 +76,14 @@ services:
       - ./scripts/init-seaweedfs.sh:/scripts/init-seaweedfs.sh:ro
       - ./config:/etc/seaweedfs
     environment:
-      ACERVO_BUCKETS: "${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
+      ACERVO_BUCKETS: "${ACERVO_BUCKETS:?}"
       ACERVO_PUBLIC_BUCKETS: "${ACERVO_PUBLIC_BUCKETS:?}"
-      ACERVO_ADMIN_ACCESS_KEY: "${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
-      ACERVO_ADMIN_SECRET_KEY: "${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
-      ROTATE_FLAG: "${ROTATE_FLAG}"
-      TARGET_BUCKET: "${TARGET_BUCKET}"
+      ACERVO_ADMIN_ACCESS_KEY: "${ACERVO_ADMIN_ACCESS_KEY:?}"
+      ACERVO_ADMIN_SECRET_KEY: "${ACERVO_ADMIN_SECRET_KEY:?}"
+      ROTATE_FLAG: "${ROTATE_FLAG?}"
+      TARGET_BUCKET: "${TARGET_BUCKET?}"
     restart: "no"
+    logging: *logging
 
 volumes:
   seaweedfs_data:

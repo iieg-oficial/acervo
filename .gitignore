@@ -17,3 +17,8 @@ backups/
 restore/*.tar.gz
 
 version-api/html/version.json
+
+secrets/*
+!secrets/.gitkeep
+!secrets/*.example
+compose.local.yaml

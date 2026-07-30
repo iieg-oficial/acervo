@@ -3,7 +3,7 @@ YELLOW := $(shell tput -Txterm setaf 3)
 WHITE  := $(shell tput -Txterm setaf 7)
 RESET  := $(shell tput -Txterm sgr0)
 
-COMPOSE_FILE := docker-compose.yml
+COMPOSE_FILE := compose.yaml
 ENV_FILE     := .env
 
 COMPOSE_CMD      := docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE)

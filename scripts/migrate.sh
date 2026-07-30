@@ -185,10 +185,10 @@ if [ -s "$CONFIG_FILE" ]; then
     info "Para forzar rotacion: 'make rotate-seaweedfs' (rota TODOS) o 'make rotate-seaweedfs BUCKET=...'"
 fi
 
-docker compose --env-file "$ENV_FILE" -f docker-compose.yml --profile init run --rm acervo-init
+docker compose --env-file "$ENV_FILE" -f compose.yaml --profile init run --rm acervo-init
 ok "identities.json generado/actualizado"
 
-docker compose --env-file "$ENV_FILE" -f docker-compose.yml up -d
+docker compose --env-file "$ENV_FILE" -f compose.yaml up -d
 info "Esperando healthcheck (max ~2 min)..."
 TRIES=0
 until [ "$(docker inspect -f '{{.State.Health.Status}}' acervo-seaweedfs 2>/dev/null || echo missing)" = "healthy" ]; do
