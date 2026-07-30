@@ -137,10 +137,13 @@ backup-list:
 cron-install:
 	@echo "${GREEN}Instalando cron de respaldos...${RESET}"
 	@ACERVO_DIR=$$(pwd); \
-	sed -e "s|/opt/acervo|$$ACERVO_DIR|g" -e "s|/bin/bash|/usr/bin/env ENV_FILE=$(ENV_FILE) /bin/bash|g" scripts/backup-cron | crontab -
+	( crontab -l 2>/dev/null | grep -v '# acervo-backup' ; \
+	  sed -e "s|/opt/acervo|$$ACERVO_DIR|g" -e "s|/bin/bash|/usr/bin/env ENV_FILE=$(ENV_FILE) /bin/bash|g" scripts/backup-cron \
+	) | crontab -
 	@echo "${GREEN}Cron instalado. Respaldos mensuales el dia 1 a las 3:00 AM${RESET}"
+	@crontab -l | grep '# acervo-backup'
 
 cron-remove:
 	@echo "${YELLOW}Desinstalando cron de respaldos...${RESET}"
-	@crontab -r 2>/dev/null || true
+	@( crontab -l 2>/dev/null | grep -v '# acervo-backup' ) | crontab -
 	@echo "${GREEN}Cron desinstalado${RESET}"

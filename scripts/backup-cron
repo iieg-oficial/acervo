@@ -1,1 +1,1 @@
-0 3 1 * * /bin/bash /opt/acervo/scripts/backup.sh >> /var/log/acervo-backup.log 2>&1
+0 3 1 * * /bin/bash /opt/acervo/scripts/backup.sh >> /var/log/acervo-backup.log 2>&1 # acervo-backup
