@@ -113,7 +113,8 @@ fi
 
 jq '.' "$TMP" > "$CONFIG_FILE"
 rm -f "$TMP"
-chmod 644 "$CONFIG_FILE"
+chown "${SEAWEEDFS_UID:-1000}:${SEAWEEDFS_GID:-1000}" "$CONFIG_FILE" 2>/dev/null || true
+chmod 640 "$CONFIG_FILE"
 
 if [ -n "$PRINTED" ]; then
     echo "$PRINTED"
