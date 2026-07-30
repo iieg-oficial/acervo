@@ -192,38 +192,45 @@ git_sync() {
         row 'Git' 'n/a' "$C_DIM" 'no es un repo git'
         return 0
     fi
-    local branch upstream local_sha remote_sha base sin_pushear
+    local branch upstream local_sha remote_sha base sin_pushear sucios detalle
     branch=$(git branch --show-current 2>/dev/null || printf '')
     if [ -z "$branch" ]; then
         fail 'Git:HEAD detached, no se puede determinar la rama' \
              'Vuelve a una rama con: git checkout <rama>'
     fi
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-        fail 'Git:hay cambios sin commitear' \
-             'Commitea o guarda los cambios antes de desplegar: git stash'
-    fi
+    sucios=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    detalle="$branch"
+    [ "$sucios" -gt 0 ] && detalle="$branch, $sucios archivo(s) sin commitear"
     upstream=$(git rev-parse --abbrev-ref '@{u}' 2>/dev/null || printf '')
     if [ -z "$upstream" ]; then
-        row 'Git' 'n/a' "$C_DIM" "$branch sin upstream"
+        row 'Git' 'n/a' "$C_DIM" "$detalle, sin upstream"
         return 0
     fi
     git fetch --quiet
     local_sha=$(git rev-parse HEAD)
     remote_sha=$(git rev-parse '@{u}')
     if [ "$local_sha" = "$remote_sha" ]; then
-        row 'Git' 'al dia' "$C_GREEN" "$branch"
+        if [ "$sucios" -gt 0 ]; then
+            row 'Git' 'sin commitear' "$C_YELLOW" "$detalle"
+        else
+            row 'Git' 'al dia' "$C_GREEN" "$detalle"
+        fi
         return 0
     fi
     base=$(git merge-base HEAD '@{u}')
     if [ "$base" = "$remote_sha" ]; then
         sin_pushear=$(git rev-list --count '@{u}..HEAD')
-        row 'Git' 'sin pushear' "$C_YELLOW" "$branch, $sin_pushear commit(s) locales"
+        row 'Git' 'sin pushear' "$C_YELLOW" "$detalle, $sin_pushear commit(s) locales"
         return 0
     fi
     if [ "$base" != "$local_sha" ]; then
         fail "Git:$branch divergio de $upstream" \
              'Resuelvelo a mano antes de desplegar: git log --oneline HEAD..@{u}'
     fi
-    git merge --ff-only --quiet '@{u}'
-    row 'Git' 'actualizado' "$C_GREEN" "$branch"
+    if git merge --ff-only --quiet '@{u}' 2>/dev/null; then
+        row 'Git' 'actualizado' "$C_GREEN" "$detalle"
+        return 0
+    fi
+    row 'Git' 'sin actualizar' "$C_YELLOW" \
+        "$detalle; el fast-forward pisaria cambios locales, se despliega el arbol actual"
 }
