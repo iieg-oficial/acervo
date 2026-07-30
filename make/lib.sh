@@ -192,7 +192,7 @@ git_sync() {
         row 'Git' 'n/a' "$C_DIM" 'no es un repo git'
         return 0
     fi
-    local branch upstream local_sha remote_sha
+    local branch upstream local_sha remote_sha base sin_pushear
     branch=$(git branch --show-current 2>/dev/null || printf '')
     if [ -z "$branch" ]; then
         fail 'Git:HEAD detached, no se puede determinar la rama' \
@@ -214,7 +214,13 @@ git_sync() {
         row 'Git' 'al dia' "$C_GREEN" "$branch"
         return 0
     fi
-    if [ "$(git merge-base HEAD '@{u}')" != "$local_sha" ]; then
+    base=$(git merge-base HEAD '@{u}')
+    if [ "$base" = "$remote_sha" ]; then
+        sin_pushear=$(git rev-list --count '@{u}..HEAD')
+        row 'Git' 'sin pushear' "$C_YELLOW" "$branch, $sin_pushear commit(s) locales"
+        return 0
+    fi
+    if [ "$base" != "$local_sha" ]; then
         fail "Git:$branch divergio de $upstream" \
              'Resuelvelo a mano antes de desplegar: git log --oneline HEAD..@{u}'
     fi
