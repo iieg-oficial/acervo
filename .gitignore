@@ -16,7 +16,6 @@ credentials/
 backups/
 restore/*.tar.gz
 
-version-api/html/version.json
 
 secrets/*
 !secrets/.gitkeep

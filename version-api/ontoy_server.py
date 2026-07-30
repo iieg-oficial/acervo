@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION_JSON_PATH = Path("/app/version.json")
 VERSION_FILE_PATH = Path("/app/VERSION")
+STARTED_AT = datetime.now(timezone.utc)
 DOCKER_SOCKET_PATH = Path("/var/run/docker.sock")
 PORT = 8088
 SERVICE = os.environ.get("ONTOY_SERVICE", "huachicol")
@@ -47,8 +47,6 @@ def _worst(statuses: list[str]) -> str:
 
 
 def _read_version() -> dict[str, Any]:
-    if VERSION_JSON_PATH.exists():
-        return json.loads(VERSION_JSON_PATH.read_text())
     if VERSION_FILE_PATH.exists():
         return {
             "version": VERSION_FILE_PATH.read_text().strip(),
@@ -57,12 +55,8 @@ def _read_version() -> dict[str, Any]:
     return {"version": None, "service": SERVICE}
 
 
-def _deployed_at() -> str | None:
-    for path in (VERSION_JSON_PATH, VERSION_FILE_PATH):
-        if path.exists():
-            ts = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-            return ts.isoformat(timespec="seconds").replace("+00:00", "Z")
-    return None
+def _deployed_at() -> str:
+    return STARTED_AT.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _check_disk() -> dict[str, Any]:

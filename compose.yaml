@@ -58,7 +58,6 @@ services:
       ONTOY_DISK_PATH: ${ONTOY_DISK_PATH:?}
     volumes:
       - ./VERSION:/app/VERSION:ro
-      - ./version-api/html/version.json:/app/version.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
       <<: *healthcheck

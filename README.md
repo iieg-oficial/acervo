@@ -26,37 +26,24 @@ make down      # Detener
 ## Rotación de credenciales
 
 ```bash
-make rotate-seaweedfs                  # Rotar todas
-make rotate-seaweedfs BUCKET=portal    # Rotar solo un bucket
-make restart                           # Aplicar la nueva config
+make rotate-seaweedfs   # Rotar todas
+make restart            # Aplicar la nueva config
 ```
 
 ## Respaldos
 
 ```bash
-make backup                              # Respaldo manual
-make restore DATE=2026-05-13             # Restaurar todos los buckets
-make restore DATE=2026-05-13 BUCKET=portal  # Restaurar un bucket
-make backup-list                         # Listar respaldos
-make cron-install                        # Cron mensual a las 3:00 AM
-make cron-remove                         # Desinstalar cron (cuidado: borra todo el crontab)
+make backup    # Respaldo manual
+make restore   # Lista los respaldos disponibles y restaura el que elijas
+make cron      # Instalar o desinstalar el cron mensual (dia 1 a las 3:00 AM)
 ```
 
 Rotación: `BACKUP_RETENTION_MONTHS` controla cuántos meses se conservan los tarballs (default 2).
 
-## Migración desde MinIO (one-shot)
+## Migración desde MinIO (cerrada)
 
-Si vienes de una versión anterior (1.21.x con MinIO):
-
-```bash
-# 1. Genera identidades y arranca SeaweedFS
-make init-seaweedfs
-make up
-
-# 2. Configura MIGRATE_MINIO_ACCESS_KEY/SECRET_KEY en .env (root del MinIO viejo)
-make migrate-from-minio
-```
-
+La migración MinIO → SeaweedFS cerró en 2.0.0: los targets `make migrate` y
+`make migrate-from-minio`, sus scripts y las variables `MIGRATE_MINIO_*` ya no existen.
 Detalles completos: `docs/changelog/v1.md` (1.22.0).
 
 ## Documentación
