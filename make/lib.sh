@@ -30,9 +30,38 @@ fail() {
     exit 1
 }
 
+step_result() {
+    local label=$1 rc=$2 elapsed=$3
+    if [ "$rc" -eq 0 ]; then
+        printf '  %s%-14s%sok%s    %02d:%02d\n' \
+            "$C_GREEN" "$label" "$C_RESET" '' "$((elapsed / 60))" "$((elapsed % 60))"
+    else
+        printf '  %s%-14s%sfail%s  %02d:%02d\n' \
+            "$C_RED" "$label" "$C_RESET" '' "$((elapsed / 60))" "$((elapsed % 60))"
+    fi
+}
+
+run_step_verbose() {
+    local label=$1
+    shift
+    local start rc
+    start=$(date +%s)
+    printf '  %s...%s%s\n' "$C_DIM" "$label" "$C_RESET"
+    set +e
+    "$@" 2>&1 | while IFS= read -r line; do printf '         %s\n' "$line"; done
+    rc=${PIPESTATUS[0]}
+    set -e
+    step_result "$label" "$rc" "$(( $(date +%s) - start ))"
+    return "$rc"
+}
+
 run_step() {
     local label=$1
     shift
+    if [ -n "${VERBOSE:-}" ]; then
+        run_step_verbose "$label" "$@"
+        return $?
+    fi
     local log
     log=$(mktemp)
     "$@" >"$log" 2>&1 &
@@ -56,13 +85,10 @@ run_step() {
     wait "$pid"
     rc=$?
     set -e
-    if [ "$rc" -eq 0 ]; then
-        printf '  %s%-14s%sok%s    %02d:%02d\n' \
-            "$C_GREEN" "$label" "$C_RESET" '' "$((elapsed / 60))" "$((elapsed % 60))"
-    else
-        printf '  %s%-14s%sfail%s  %02d:%02d\n' \
-            "$C_RED" "$label" "$C_RESET" '' "$((elapsed / 60))" "$((elapsed % 60))"
+    step_result "$label" "$rc" "$elapsed"
+    if [ "$rc" -ne 0 ]; then
         tail -40 "$log" | while IFS= read -r line; do printf '         %s\n' "$line"; done
+        printf '         %sVERBOSE=1 muestra la salida completa%s\n' "$C_DIM" "$C_RESET"
     fi
     rm -f "$log"
     return "$rc"

@@ -23,7 +23,7 @@ UP_PROD_CMD ?= dc prod up -d
 DEPLOY_CMD ?= dc prod up -d --build
 DEPLOY_POST ?= $(UP_POST)
 
-export REPO_NAME PROJECT_PROD PROJECT_DEV COMPOSE_PROD_CMD COMPOSE_DEV_CMD
+export REPO_NAME PROJECT_PROD PROJECT_DEV COMPOSE_PROD_CMD COMPOSE_DEV_CMD VERBOSE
 
 .PHONY: help up deploy down restart logs status shell clean _up-prod
 
@@ -56,7 +56,7 @@ _up-prod: $(UP_PRE)
 	rule
 	printf '\n'
 
-deploy: $(DEPLOY_PRE) ## Actualizar, reconstruir y levantar produccion
+deploy: $(DEPLOY_PRE) ## Actualizar, reconstruir y levantar produccion (VERBOSE=1 para ver el build)
 	@$(LIB)
 	start=$$(date +%s)
 	banner 'DEPLOY' 'produccion'
