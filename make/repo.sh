@@ -17,18 +17,18 @@ pick_bucket() {
 cron_install() {
     local dir
     dir=$(pwd)
-    (
-        crontab -l 2>/dev/null | grep -v "$CRON_MARKER"
+    {
+        crontab -l 2>/dev/null | grep -v "$CRON_MARKER" || true
         sed -e "s|/opt/acervo|$dir|g" \
             -e "s|/bin/bash|/usr/bin/env ENV_FILE=.env /bin/bash|g" scripts/backup-cron
-    ) | crontab -
+    } | crontab -
     row 'Cron' 'instalado' "$C_GREEN" 'mensual, dia 1 a las 3:00'
     crontab -l | grep "$CRON_MARKER" | while IFS= read -r line; do
         printf '         %s\n' "$line"
-    done
+    done || true
 }
 
 cron_remove() {
-    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER") | crontab -
+    { crontab -l 2>/dev/null | grep -v "$CRON_MARKER" || true; } | crontab -
     row 'Cron' 'desinstalado' "$C_GREEN"
 }
