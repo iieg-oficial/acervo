@@ -54,6 +54,9 @@ services:
     restart: unless-stopped
     environment:
       ONTOY_SERVICE: acervo
+      ONTOY_NODE: ${ONTOY_NODE:?}
+      ONTOY_NODE_REPORTER: ${ONTOY_NODE_REPORTER:?}
+      ONTOY_PEER_CHECKS: ${ONTOY_PEER_CHECKS}
       ONTOY_COMPOSE_PROJECT: acervo
       ONTOY_DISK_PATH: ${ONTOY_DISK_PATH:?}
     volumes:

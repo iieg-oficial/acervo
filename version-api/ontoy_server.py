@@ -2,15 +2,18 @@ import http.client
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION_FILE_PATH = Path("/app/VERSION")
+VERSION_FILE_PATH = Path(os.environ.get("ONTOY_VERSION_FILE", "/app/VERSION"))
+CHANGELOG_FILE_PATH = Path(os.environ.get("ONTOY_CHANGELOG_FILE", "/app/CHANGELOG.md"))
 STARTED_AT = datetime.now(timezone.utc)
 DOCKER_SOCKET_PATH = Path("/var/run/docker.sock")
 PORT = 8088
@@ -19,6 +22,15 @@ COMPOSE_PROJECT = os.environ.get("ONTOY_COMPOSE_PROJECT", "")
 DISK_PATH = os.environ.get("ONTOY_DISK_PATH", "/")
 DISK_WARN_PERCENT = float(os.environ.get("ONTOY_DISK_WARN_PERCENT", "85"))
 DISK_CRITICAL_PERCENT = float(os.environ.get("ONTOY_DISK_CRITICAL_PERCENT", "95"))
+UPSTREAM_URL = os.environ.get("ONTOY_UPSTREAM_URL", "").strip()
+NODE = os.environ.get("ONTOY_NODE", "").strip()
+NODE_REPORTER = os.environ.get("ONTOY_NODE_REPORTER", "").strip().lower() in ("1", "true", "si")
+PROC_PATH = Path(os.environ.get("ONTOY_PROC_PATH", "/proc"))
+LOAD_WARN_PER_CORE = float(os.environ.get("ONTOY_LOAD_WARN_PER_CORE", "0.9"))
+LOAD_CRITICAL_PER_CORE = float(os.environ.get("ONTOY_LOAD_CRITICAL_PER_CORE", "1.5"))
+MEMORY_WARN_PERCENT = float(os.environ.get("ONTOY_MEMORY_WARN_PERCENT", "80"))
+MEMORY_CRITICAL_PERCENT = float(os.environ.get("ONTOY_MEMORY_CRITICAL_PERCENT", "92"))
+SWAP_WARN_PERCENT = float(os.environ.get("ONTOY_SWAP_WARN_PERCENT", "10"))
 DEPENDENCY_TIMEOUT = 2.0
 
 STATUS_OK = "ok"
@@ -26,6 +38,24 @@ STATUS_DEGRADED = "degraded"
 STATUS_DOWN = "down"
 
 _SEVERITY = {STATUS_OK: 0, STATUS_DEGRADED: 1, STATUS_DOWN: 2}
+
+INFORMATIVOS = ("carga", "memoria", "swap")
+
+
+def _es_informativo(nombre: str) -> bool:
+    return nombre in INFORMATIVOS or nombre.startswith("peer_")
+
+
+def _criticos(checks: dict[str, Any]) -> list[str]:
+    return [
+        check["status"] for nombre, check in checks.items() if not _es_informativo(nombre)
+    ]
+
+
+def _marcar_informativos(checks: dict[str, Any]) -> None:
+    for nombre, check in checks.items():
+        if _es_informativo(nombre):
+            check["informativo"] = True
 
 
 class _UnixHTTPConnection(http.client.HTTPConnection):
@@ -46,13 +76,48 @@ def _worst(statuses: list[str]) -> str:
     return max(statuses, key=lambda s: _SEVERITY.get(s, 0))
 
 
+def _version_de_pyproject(texto: str) -> str | None:
+    match = re.search(r'^version\s*=\s*["\']([^"\']+)', texto, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _version_de_package_json(texto: str) -> str | None:
+    try:
+        return json.loads(texto).get("version")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _version_del_archivo(ruta: Path) -> str | None:
+    try:
+        texto = ruta.read_text()
+    except OSError:
+        return None
+    if ruta.name == "pyproject.toml":
+        return _version_de_pyproject(texto)
+    if ruta.name == "package.json":
+        return _version_de_package_json(texto)
+    return texto.strip() or None
+
+
 def _read_version() -> dict[str, Any]:
-    if VERSION_FILE_PATH.exists():
-        return {
-            "version": VERSION_FILE_PATH.read_text().strip(),
-            "service": SERVICE,
-        }
-    return {"version": None, "service": SERVICE}
+    version = _version_del_archivo(VERSION_FILE_PATH) if VERSION_FILE_PATH.exists() else None
+    payload: dict[str, Any] = {"version": version, "service": SERVICE}
+    released_at = _released_at()
+    if released_at:
+        payload["released_at"] = released_at
+    return payload
+
+
+def _released_at() -> str | None:
+    if not CHANGELOG_FILE_PATH.exists():
+        return None
+    try:
+        texto = CHANGELOG_FILE_PATH.read_text()
+    except OSError:
+        return None
+    match = re.search(r"^##\s*\[[^\]]+\]\s*-\s*(\d{4}-\d{2}-\d{2})", texto, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def _deployed_at() -> str:
@@ -104,6 +169,205 @@ def _check_dependency(url: str) -> dict[str, Any]:
         return {"status": STATUS_DOWN, "detail": f"HTTP {exc.code}"}
     except Exception as exc:
         return {"status": STATUS_DOWN, "detail": str(exc)[:120]}
+
+
+def _fetch_upstream(url: str) -> tuple[dict[str, Any], str | None]:
+    try:
+        request = urllib.request.Request(
+            url, method="GET", headers={"Accept": "application/json"}
+        )
+        with urllib.request.urlopen(request, timeout=DEPENDENCY_TIMEOUT) as response:
+            return json.loads(response.read()), None
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read()), None
+        except Exception:
+            return {}, f"HTTP {exc.code}"
+    except Exception as exc:
+        return {}, str(exc)[:120]
+
+
+def _merge_upstream(payload: dict[str, Any], checks: dict[str, Any]) -> None:
+    upstream, error = _fetch_upstream(UPSTREAM_URL)
+    if error:
+        checks["upstream"] = {"status": STATUS_DOWN, "detail": error}
+        return
+
+    for name, check in (upstream.get("checks") or {}).items():
+        if isinstance(check, dict) and "status" in check:
+            checks.setdefault(name, check)
+
+    for field in ("version", "released_at", "deployed_at"):
+        if not payload.get(field) and upstream.get(field):
+            payload[field] = upstream[field]
+
+    declared = upstream.get("status")
+    merged = _worst(_criticos(checks))
+    if declared in _SEVERITY and _SEVERITY[declared] > _SEVERITY[merged]:
+        checks["upstream"] = {
+            "status": declared,
+            "detail": f"el servicio se declara {declared} sin un check que lo explique",
+        }
+
+
+def _leer_proc(nombre: str) -> str | None:
+    try:
+        return (PROC_PATH / nombre).read_text()
+    except OSError:
+        return None
+
+
+def _cpu_cores() -> int:
+    return os.cpu_count() or 1
+
+
+def _check_carga() -> dict[str, Any] | None:
+    contenido = _leer_proc("loadavg")
+    if not contenido:
+        return None
+    partes = contenido.split()
+    if len(partes) < 3:
+        return None
+    try:
+        uno, cinco, quince = (float(p) for p in partes[:3])
+    except ValueError:
+        return None
+
+    nucleos = _cpu_cores()
+    por_nucleo = uno / nucleos
+    if por_nucleo >= LOAD_CRITICAL_PER_CORE:
+        estado = STATUS_DOWN
+    elif por_nucleo >= LOAD_WARN_PER_CORE:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    return {
+        "status": estado,
+        "load_1m": round(uno, 2),
+        "load_5m": round(cinco, 2),
+        "load_15m": round(quince, 2),
+        "cores": nucleos,
+        "load_per_core": round(por_nucleo, 2),
+    }
+
+
+def _meminfo() -> dict[str, int]:
+    contenido = _leer_proc("meminfo")
+    if not contenido:
+        return {}
+    valores: dict[str, int] = {}
+    for linea in contenido.splitlines():
+        clave, _, resto = linea.partition(":")
+        numero = resto.strip().split(" ")[0]
+        if numero.isdigit():
+            valores[clave] = int(numero)
+    return valores
+
+
+def _check_memoria() -> dict[str, Any] | None:
+    valores = _meminfo()
+    total = valores.get("MemTotal")
+    if not total:
+        return None
+    disponible = valores.get("MemAvailable", valores.get("MemFree", 0))
+    usado = total - disponible
+    porcentaje = usado / total * 100
+    if porcentaje >= MEMORY_CRITICAL_PERCENT:
+        estado = STATUS_DOWN
+    elif porcentaje >= MEMORY_WARN_PERCENT:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    return {
+        "status": estado,
+        "used_percent": round(porcentaje, 1),
+        "used_gb": round(usado / 1024 / 1024, 2),
+        "total_gb": round(total / 1024 / 1024, 2),
+    }
+
+
+def _check_swap() -> dict[str, Any] | None:
+    valores = _meminfo()
+    total = valores.get("SwapTotal")
+    if not total:
+        return None
+    libre = valores.get("SwapFree", 0)
+    usado = total - libre
+    porcentaje = usado / total * 100
+    estado = STATUS_DEGRADED if porcentaje >= SWAP_WARN_PERCENT else STATUS_OK
+    return {
+        "status": estado,
+        "used_percent": round(porcentaje, 1),
+        "used_gb": round(usado / 1024 / 1024, 2),
+        "total_gb": round(total / 1024 / 1024, 2),
+    }
+
+
+def _uptime_segundos() -> int | None:
+    contenido = _leer_proc("uptime")
+    if not contenido:
+        return None
+    try:
+        return int(float(contenido.split()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_peer_checks() -> list[tuple[str, str, int]]:
+    raw = os.environ.get("ONTOY_PEER_CHECKS", "").strip()
+    if not raw:
+        return []
+    aristas = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        nodo, destino = item.split("=", 1)
+        host, _, puerto = destino.strip().rpartition(":")
+        if not host or not puerto.isdigit():
+            continue
+        aristas.append((nodo.strip(), host, int(puerto)))
+    return aristas
+
+
+def _check_peer(host: str, puerto: int) -> dict[str, Any]:
+    inicio = time.monotonic()
+    try:
+        with socket.create_connection((host, puerto), timeout=DEPENDENCY_TIMEOUT):
+            latencia = int((time.monotonic() - inicio) * 1000)
+            return {"status": STATUS_OK, "port": puerto, "latency_ms": latencia}
+    except Exception as exc:
+        return {"status": STATUS_DOWN, "port": puerto, "detail": str(exc)[:120]}
+
+
+def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
+    metricas: dict[str, Any] = {"cores": _cpu_cores()}
+
+    carga = _check_carga()
+    if carga:
+        checks["carga"] = carga
+        metricas["load_1m"] = carga["load_1m"]
+        metricas["load_5m"] = carga["load_5m"]
+        metricas["load_15m"] = carga["load_15m"]
+
+    memoria = _check_memoria()
+    if memoria:
+        checks["memoria"] = memoria
+        metricas["memory_used_gb"] = memoria["used_gb"]
+        metricas["memory_total_gb"] = memoria["total_gb"]
+        metricas["memory_used_percent"] = memoria["used_percent"]
+
+    swap = _check_swap()
+    if swap:
+        checks["swap"] = swap
+        metricas["swap_used_gb"] = swap["used_gb"]
+        metricas["swap_used_percent"] = swap["used_percent"]
+
+    segundos = _uptime_segundos()
+    if segundos is not None:
+        metricas["uptime_seconds"] = segundos
+
+    return metricas
 
 
 def _parse_port_checks() -> list[tuple[str, str, int]]:
@@ -215,8 +479,26 @@ def build_payload() -> dict[str, Any]:
         if containers_error:
             checks["containers"]["detail"] = containers_error
 
+    peers = {}
+    for nodo, host, puerto in _parse_peer_checks():
+        resultado = _check_peer(host, puerto)
+        peers[nodo] = resultado
+        checks[f"peer_{nodo}"] = resultado
+    if peers:
+        payload["peers"] = peers
+
+    if NODE:
+        payload["node"] = NODE
+        payload["node_reporter"] = NODE_REPORTER
+        if NODE_REPORTER:
+            payload["host"] = _host_metrics(checks)
+
+    if UPSTREAM_URL:
+        _merge_upstream(payload, checks)
+
+    _marcar_informativos(checks)
     payload["checks"] = checks
-    payload["status"] = _worst([c["status"] for c in checks.values()])
+    payload["status"] = _worst(_criticos(checks))
     return payload
 
 
