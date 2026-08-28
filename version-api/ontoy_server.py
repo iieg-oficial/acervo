@@ -29,6 +29,7 @@ PROC_PATH = Path(os.environ.get("ONTOY_PROC_PATH", "/proc"))
 OS_RELEASE_PATH = Path(os.environ.get("ONTOY_OS_RELEASE_FILE", "/host/etc/os-release"))
 NODE_IP = os.environ.get("ONTOY_NODE_IP", "").strip()
 THERMAL_PATH = Path(os.environ.get("ONTOY_THERMAL_PATH", "/sys/class/thermal"))
+HWMON_PATH = Path(os.environ.get("ONTOY_HWMON_PATH", "/sys/class/hwmon"))
 TEMP_WARN = float(os.environ.get("ONTOY_TEMP_WARN", "70"))
 TEMP_CRITICAL = float(os.environ.get("ONTOY_TEMP_CRITICAL", "85"))
 LOAD_WARN_PER_CORE = float(os.environ.get("ONTOY_LOAD_WARN_PER_CORE", "0.9"))
@@ -365,21 +366,88 @@ def _sistema_operativo() -> str | None:
     return None
 
 
-def _temperatura_cpu() -> int | None:
-    """La zona termica mas caliente del equipo. En una VM normalmente no hay ninguna."""
+SENSORES = (
+    ("coretemp", "CPU"),
+    ("k10temp", "CPU"),
+    ("cpu_thermal", "CPU"),
+    ("acpitz", "Sistema"),
+    ("nvme", "Disco"),
+    ("amdgpu", "Gráficos"),
+    ("nouveau", "Gráficos"),
+    ("i915", "Gráficos"),
+)
+
+
+def _leer_grados(ruta: Path) -> float | None:
+    try:
+        grados = int(ruta.read_text().strip()) / 1000
+    except (OSError, ValueError):
+        return None
+    return grados if 0 < grados < 150 else None
+
+
+def _sensor_de_chip(carpeta: Path) -> float | None:
+    """El paquete del chip si lo declara; si no, su lectura mas alta."""
+    lecturas = []
+    for entrada in sorted(carpeta.glob("temp*_input")):
+        grados = _leer_grados(entrada)
+        if grados is None:
+            continue
+        etiqueta = ""
+        archivo_etiqueta = entrada.parent / entrada.name.replace("_input", "_label")
+        try:
+            etiqueta = archivo_etiqueta.read_text().strip()
+        except OSError:
+            pass
+        if etiqueta.lower().startswith(("package", "composite", "tctl")):
+            return grados
+        lecturas.append(grados)
+    return max(lecturas) if lecturas else None
+
+
+def _sensores_temperatura() -> list[dict[str, Any]]:
+    encontrados: dict[str, float] = {}
+    try:
+        carpetas = sorted(HWMON_PATH.glob("hwmon*"))
+    except OSError:
+        carpetas = []
+
+    for carpeta in carpetas:
+        try:
+            chip = (carpeta / "name").read_text().strip()
+        except OSError:
+            continue
+        nombre = next((n for clave, n in SENSORES if chip.startswith(clave)), None)
+        if not nombre:
+            continue
+        grados = _sensor_de_chip(carpeta)
+        if grados is None:
+            continue
+        encontrados[nombre] = max(encontrados.get(nombre, 0), grados)
+
+    if not encontrados:
+        respaldo = _temperatura_thermal()
+        if respaldo is not None:
+            encontrados["Sistema"] = respaldo
+
+    orden = [n for _, n in SENSORES]
+    return [
+        {"nombre": nombre, "celsius": round(grados)}
+        for nombre, grados in sorted(encontrados.items(), key=lambda par: orden.index(par[0]))
+    ]
+
+
+def _temperatura_thermal() -> float | None:
     lecturas = []
     try:
         zonas = sorted(THERMAL_PATH.glob("thermal_zone*"))
     except OSError:
         return None
     for zona in zonas:
-        try:
-            grados = int((zona / "temp").read_text().strip()) / 1000
-        except (OSError, ValueError):
-            continue
-        if 0 < grados < 150:
+        grados = _leer_grados(zona / "temp")
+        if grados is not None:
             lecturas.append(grados)
-    return round(max(lecturas)) if lecturas else None
+    return max(lecturas) if lecturas else None
 
 
 def _check_temperatura(grados: int) -> dict[str, Any]:
@@ -426,10 +494,13 @@ def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
         metricas["swap_used_gb"] = swap["used_gb"]
         metricas["swap_used_percent"] = swap["used_percent"]
 
-    grados = _temperatura_cpu()
-    if grados is not None:
-        checks["temperatura"] = _check_temperatura(grados)
-        metricas["cpu_celsius"] = grados
+    sensores = _sensores_temperatura()
+    if sensores:
+        metricas["temperaturas"] = sensores
+        cpu = next((s for s in sensores if s["nombre"] == "CPU"), None)
+        if cpu:
+            metricas["cpu_celsius"] = cpu["celsius"]
+        checks["temperatura"] = _check_temperatura(max(s["celsius"] for s in sensores))
 
     segundos = _uptime_segundos()
     if segundos is not None:
