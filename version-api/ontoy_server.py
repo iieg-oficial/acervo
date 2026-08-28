@@ -26,12 +26,15 @@ UPSTREAM_URL = os.environ.get("ONTOY_UPSTREAM_URL", "").strip()
 NODE = os.environ.get("ONTOY_NODE", "").strip()
 NODE_REPORTER = os.environ.get("ONTOY_NODE_REPORTER", "").strip().lower() in ("1", "true", "si")
 PROC_PATH = Path(os.environ.get("ONTOY_PROC_PATH", "/proc"))
+OS_RELEASE_PATH = Path(os.environ.get("ONTOY_OS_RELEASE_FILE", "/host/etc/os-release"))
+NODE_IP = os.environ.get("ONTOY_NODE_IP", "").strip()
 LOAD_WARN_PER_CORE = float(os.environ.get("ONTOY_LOAD_WARN_PER_CORE", "0.9"))
 LOAD_CRITICAL_PER_CORE = float(os.environ.get("ONTOY_LOAD_CRITICAL_PER_CORE", "1.5"))
 MEMORY_WARN_PERCENT = float(os.environ.get("ONTOY_MEMORY_WARN_PERCENT", "80"))
 MEMORY_CRITICAL_PERCENT = float(os.environ.get("ONTOY_MEMORY_CRITICAL_PERCENT", "92"))
 SWAP_WARN_PERCENT = float(os.environ.get("ONTOY_SWAP_WARN_PERCENT", "10"))
 DEPENDENCY_TIMEOUT = 2.0
+PEER_TIMEOUT = float(os.environ.get("ONTOY_PEER_TIMEOUT", "0.8"))
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
@@ -333,15 +336,45 @@ def _parse_peer_checks() -> list[tuple[str, str, int]]:
 def _check_peer(host: str, puerto: int) -> dict[str, Any]:
     inicio = time.monotonic()
     try:
-        with socket.create_connection((host, puerto), timeout=DEPENDENCY_TIMEOUT):
+        with socket.create_connection((host, puerto), timeout=PEER_TIMEOUT):
             latencia = int((time.monotonic() - inicio) * 1000)
             return {"status": STATUS_OK, "port": puerto, "latency_ms": latencia}
     except Exception as exc:
         return {"status": STATUS_DOWN, "port": puerto, "detail": str(exc)[:120]}
 
 
+def _kernel() -> str | None:
+    contenido = _leer_proc("version")
+    if not contenido:
+        return None
+    partes = contenido.split()
+    return partes[2] if len(partes) > 2 else None
+
+
+def _sistema_operativo() -> str | None:
+    try:
+        contenido = OS_RELEASE_PATH.read_text()
+    except OSError:
+        return None
+    for linea in contenido.splitlines():
+        if linea.startswith("PRETTY_NAME="):
+            return linea.split("=", 1)[1].strip().strip('"') or None
+    return None
+
+
 def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
     metricas: dict[str, Any] = {"cores": _cpu_cores()}
+
+    if NODE_IP:
+        metricas["ip"] = NODE_IP
+
+    kernel = _kernel()
+    if kernel:
+        metricas["kernel"] = kernel
+
+    sistema = _sistema_operativo()
+    if sistema:
+        metricas["os"] = sistema
 
     carga = _check_carga()
     if carga:

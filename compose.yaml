@@ -62,6 +62,7 @@ services:
     volumes:
       - ./VERSION:/app/VERSION:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/os-release:/host/etc/os-release:ro
     healthcheck:
       <<: *healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/ontoy').read()"]
