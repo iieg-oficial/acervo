@@ -39,6 +39,7 @@ MEMORY_CRITICAL_PERCENT = float(os.environ.get("ONTOY_MEMORY_CRITICAL_PERCENT", 
 SWAP_WARN_PERCENT = float(os.environ.get("ONTOY_SWAP_WARN_PERCENT", "10"))
 DEPENDENCY_TIMEOUT = 2.0
 PEER_TIMEOUT = float(os.environ.get("ONTOY_PEER_TIMEOUT", "0.8"))
+CPU_SAMPLE_SECONDS = float(os.environ.get("ONTOY_CPU_SAMPLE_SECONDS", "0.15"))
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
@@ -226,6 +227,52 @@ def _leer_proc(nombre: str) -> str | None:
 
 def _cpu_cores() -> int:
     return os.cpu_count() or 1
+
+
+def _lecturas_cpu() -> dict[str, tuple[int, int]]:
+    """Por core: (tiempo total, tiempo ocioso), acumulados desde el arranque."""
+    contenido = _leer_proc("stat")
+    if not contenido:
+        return {}
+    lecturas = {}
+    for linea in contenido.splitlines():
+        if not linea.startswith("cpu") or linea.startswith("cpu "):
+            continue
+        partes = linea.split()
+        try:
+            valores = [int(v) for v in partes[1:]]
+        except ValueError:
+            continue
+        if len(valores) < 5:
+            continue
+        lecturas[partes[0]] = (sum(valores), valores[3] + valores[4])
+    return lecturas
+
+
+def _uso_por_core() -> list[dict[str, Any]]:
+    """Uso de cada core, medido sobre un intervalo corto: /proc/stat solo da acumulados."""
+    primera = _lecturas_cpu()
+    if not primera:
+        return []
+    time.sleep(CPU_SAMPLE_SECONDS)
+    segunda = _lecturas_cpu()
+
+    usos = []
+    for nombre, (total_previo, ocio_previo) in sorted(
+        primera.items(), key=lambda par: int(par[0][3:])
+    ):
+        if nombre not in segunda:
+            continue
+        total_ahora, ocio_ahora = segunda[nombre]
+        delta_total = total_ahora - total_previo
+        if delta_total <= 0:
+            continue
+        delta_activo = delta_total - (ocio_ahora - ocio_previo)
+        usos.append({
+            "core": int(nombre[3:]),
+            "uso": max(0, min(100, round(delta_activo / delta_total * 100))),
+        })
+    return usos
 
 
 def _check_carga() -> dict[str, Any] | None:
@@ -476,6 +523,11 @@ def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
     sistema = _sistema_operativo()
     if sistema:
         metricas["os"] = sistema
+
+    cores = _uso_por_core()
+    if cores:
+        metricas["cores_uso"] = cores
+        metricas["cpu_used_percent"] = round(sum(c["uso"] for c in cores) / len(cores))
 
     carga = _check_carga()
     if carga:
