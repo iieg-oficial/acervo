@@ -28,6 +28,9 @@ NODE_REPORTER = os.environ.get("ONTOY_NODE_REPORTER", "").strip().lower() in ("1
 PROC_PATH = Path(os.environ.get("ONTOY_PROC_PATH", "/proc"))
 OS_RELEASE_PATH = Path(os.environ.get("ONTOY_OS_RELEASE_FILE", "/host/etc/os-release"))
 NODE_IP = os.environ.get("ONTOY_NODE_IP", "").strip()
+THERMAL_PATH = Path(os.environ.get("ONTOY_THERMAL_PATH", "/sys/class/thermal"))
+TEMP_WARN = float(os.environ.get("ONTOY_TEMP_WARN", "70"))
+TEMP_CRITICAL = float(os.environ.get("ONTOY_TEMP_CRITICAL", "85"))
 LOAD_WARN_PER_CORE = float(os.environ.get("ONTOY_LOAD_WARN_PER_CORE", "0.9"))
 LOAD_CRITICAL_PER_CORE = float(os.environ.get("ONTOY_LOAD_CRITICAL_PER_CORE", "1.5"))
 MEMORY_WARN_PERCENT = float(os.environ.get("ONTOY_MEMORY_WARN_PERCENT", "80"))
@@ -42,7 +45,7 @@ STATUS_DOWN = "down"
 
 _SEVERITY = {STATUS_OK: 0, STATUS_DEGRADED: 1, STATUS_DOWN: 2}
 
-INFORMATIVOS = ("carga", "memoria", "swap")
+INFORMATIVOS = ("carga", "memoria", "swap", "temperatura")
 
 
 def _es_informativo(nombre: str) -> bool:
@@ -362,6 +365,33 @@ def _sistema_operativo() -> str | None:
     return None
 
 
+def _temperatura_cpu() -> int | None:
+    """La zona termica mas caliente del equipo. En una VM normalmente no hay ninguna."""
+    lecturas = []
+    try:
+        zonas = sorted(THERMAL_PATH.glob("thermal_zone*"))
+    except OSError:
+        return None
+    for zona in zonas:
+        try:
+            grados = int((zona / "temp").read_text().strip()) / 1000
+        except (OSError, ValueError):
+            continue
+        if 0 < grados < 150:
+            lecturas.append(grados)
+    return round(max(lecturas)) if lecturas else None
+
+
+def _check_temperatura(grados: int) -> dict[str, Any]:
+    if grados >= TEMP_CRITICAL:
+        estado = STATUS_DOWN
+    elif grados >= TEMP_WARN:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    return {"status": estado, "celsius": grados}
+
+
 def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
     metricas: dict[str, Any] = {"cores": _cpu_cores()}
 
@@ -395,6 +425,11 @@ def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
         checks["swap"] = swap
         metricas["swap_used_gb"] = swap["used_gb"]
         metricas["swap_used_percent"] = swap["used_percent"]
+
+    grados = _temperatura_cpu()
+    if grados is not None:
+        checks["temperatura"] = _check_temperatura(grados)
+        metricas["cpu_celsius"] = grados
 
     segundos = _uptime_segundos()
     if segundos is not None:
