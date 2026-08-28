@@ -285,11 +285,14 @@ def _check_memoria() -> dict[str, Any] | None:
         estado = STATUS_DEGRADED
     else:
         estado = STATUS_OK
+    cache = valores.get("Cached", 0) + valores.get("Buffers", 0)
     return {
         "status": estado,
         "used_percent": round(porcentaje, 1),
         "used_gb": round(usado / 1024 / 1024, 2),
         "total_gb": round(total / 1024 / 1024, 2),
+        "cache_gb": round(cache / 1024 / 1024, 2),
+        "free_gb": round(valores.get("MemFree", 0) / 1024 / 1024, 2),
     }
 
 
@@ -487,6 +490,8 @@ def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
         metricas["memory_used_gb"] = memoria["used_gb"]
         metricas["memory_total_gb"] = memoria["total_gb"]
         metricas["memory_used_percent"] = memoria["used_percent"]
+        metricas["memory_cache_gb"] = memoria["cache_gb"]
+        metricas["memory_free_gb"] = memoria["free_gb"]
 
     swap = _check_swap()
     if swap:
