@@ -11,7 +11,6 @@ backup: ## Ejecutar un respaldo manual
 restore: ## Restaurar un respaldo, con selector
 	@$(LIB)
 	banner 'RESTORE'
-	rule
 	ENV_FILE=.env bash scripts/restore.sh
 
 cron: ## Instalar o desinstalar el cron de respaldos
