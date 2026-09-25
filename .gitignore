@@ -22,3 +22,7 @@ secrets/*
 !secrets/*.example
 compose.local.yaml
 .restore_staging/
+
+*.bak
+*.bak-*
+*.bak.*
