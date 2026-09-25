@@ -108,16 +108,16 @@ fi
 confirm "Esto sobrescribe en acervo los objetos de: ${BUCKETS}." 'restaurar'
 rule
 
+source "$SCRIPT_DIR/mc-host.sh"
+export_mc_host "$CONTAINER"
+
 restore_bucket() {
     docker run --rm \
         --network "$NETWORK" \
+        -e MC_HOST_acervo \
         -v "${STAGING_DIR}:/restore:ro" \
         --entrypoint=/bin/sh \
-        "$MC_IMAGE" -c "
-            mc alias set acervo http://${CONTAINER}:8333 '${ACERVO_ADMIN_ACCESS_KEY}' '${ACERVO_ADMIN_SECRET_KEY}' && \
-            mc mb acervo/${1} --ignore-existing && \
-            mc mirror /restore/${1} acervo/${1} --overwrite
-        "
+        "$MC_IMAGE" -c 'mc mb "acervo/$1" --ignore-existing && mc mirror "/restore/$1" "acervo/$1" --overwrite' sh "$1"
 }
 
 run_step 'Extraer' tar -xzf "$ARCHIVE" -C "$STAGING_DIR"

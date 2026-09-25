@@ -5,17 +5,21 @@ import os
 import re
 import shutil
 import socket
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 VERSION_FILE_PATH = Path(os.environ.get("ONTOY_VERSION_FILE", "/app/VERSION"))
 CHANGELOG_FILE_PATH = Path(os.environ.get("ONTOY_CHANGELOG_FILE", "/app/CHANGELOG.md"))
 STARTED_AT = datetime.now(timezone.utc)
 DOCKER_SOCKET_PATH = Path("/var/run/docker.sock")
+DOCKER_HOST = os.environ.get("DOCKER_HOST", "").strip()
 PORT = 8088
 SERVICE = os.environ.get("ONTOY_SERVICE", "huachicol")
 COMPOSE_PROJECT = os.environ.get("ONTOY_COMPOSE_PROJECT", "")
@@ -39,7 +43,9 @@ MEMORY_CRITICAL_PERCENT = float(os.environ.get("ONTOY_MEMORY_CRITICAL_PERCENT", 
 SWAP_WARN_PERCENT = float(os.environ.get("ONTOY_SWAP_WARN_PERCENT", "10"))
 DEPENDENCY_TIMEOUT = 2.0
 PEER_TIMEOUT = float(os.environ.get("ONTOY_PEER_TIMEOUT", "0.8"))
-CPU_SAMPLE_SECONDS = float(os.environ.get("ONTOY_CPU_SAMPLE_SECONDS", "0.15"))
+MAX_THREADS = int(os.environ.get("ONTOY_MAX_THREADS", "8"))
+REQUEST_TIMEOUT = float(os.environ.get("ONTOY_REQUEST_TIMEOUT", "5"))
+PAYLOAD_CACHE_SECONDS = float(os.environ.get("ONTOY_CACHE_SECONDS", "2"))
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
@@ -249,30 +255,37 @@ def _lecturas_cpu() -> dict[str, tuple[int, int]]:
     return lecturas
 
 
-def _uso_por_core() -> list[dict[str, Any]]:
-    """Uso de cada core, medido sobre un intervalo corto: /proc/stat solo da acumulados."""
-    primera = _lecturas_cpu()
-    if not primera:
-        return []
-    time.sleep(CPU_SAMPLE_SECONDS)
-    segunda = _lecturas_cpu()
+_cpu_lock = threading.Lock()
+_cpu_previa: dict[str, tuple[int, int]] = {}
+_cpu_usos: list[dict[str, Any]] = []
 
-    usos = []
-    for nombre, (total_previo, ocio_previo) in sorted(
-        primera.items(), key=lambda par: int(par[0][3:])
-    ):
-        if nombre not in segunda:
-            continue
-        total_ahora, ocio_ahora = segunda[nombre]
-        delta_total = total_ahora - total_previo
-        if delta_total <= 0:
-            continue
-        delta_activo = delta_total - (ocio_ahora - ocio_previo)
-        usos.append({
-            "core": int(nombre[3:]),
-            "uso": max(0, min(100, round(delta_activo / delta_total * 100))),
-        })
-    return usos
+
+def _uso_por_core() -> list[dict[str, Any]]:
+    """Uso de cada core entre esta lectura y la anterior: /proc/stat solo da acumulados."""
+    global _cpu_previa, _cpu_usos
+    with _cpu_lock:
+        actual = _lecturas_cpu()
+        if not actual:
+            return []
+        usos = []
+        for nombre, (total_ahora, ocio_ahora) in sorted(
+            actual.items(), key=lambda par: int(par[0][3:])
+        ):
+            if nombre not in _cpu_previa:
+                continue
+            total_previo, ocio_previo = _cpu_previa[nombre]
+            delta_total = total_ahora - total_previo
+            if delta_total <= 0:
+                continue
+            delta_activo = delta_total - (ocio_ahora - ocio_previo)
+            usos.append({
+                "core": int(nombre[3:]),
+                "uso": max(0, min(100, round(delta_activo / delta_total * 100))),
+            })
+        _cpu_previa = actual
+        if usos:
+            _cpu_usos = usos
+        return list(_cpu_usos)
 
 
 def _check_carga() -> dict[str, Any] | None:
@@ -591,8 +604,21 @@ def _check_port(host: str, port: int) -> dict[str, Any]:
         return {"status": STATUS_DOWN, "port": port, "detail": str(exc)[:120]}
 
 
+def _docker_connection() -> http.client.HTTPConnection:
+    if DOCKER_HOST.startswith("tcp://"):
+        destino = urlsplit(DOCKER_HOST)
+        return http.client.HTTPConnection(
+            destino.hostname or "localhost", destino.port or 2375, timeout=DEPENDENCY_TIMEOUT
+        )
+    return _UnixHTTPConnection(str(DOCKER_SOCKET_PATH), timeout=DEPENDENCY_TIMEOUT)
+
+
+def _docker_disponible() -> bool:
+    return DOCKER_HOST.startswith("tcp://") or DOCKER_SOCKET_PATH.exists()
+
+
 def _docker_get(path: str) -> Any:
-    connection = _UnixHTTPConnection(str(DOCKER_SOCKET_PATH), timeout=DEPENDENCY_TIMEOUT)
+    connection = _docker_connection()
     try:
         connection.request("GET", path, headers={"Host": "localhost"})
         response = connection.getresponse()
@@ -605,13 +631,14 @@ def _docker_get(path: str) -> Any:
 
 
 def _list_containers() -> tuple[list[dict[str, Any]], str | None]:
-    if not DOCKER_SOCKET_PATH.exists():
+    if not _docker_disponible():
         return [], None
 
     try:
         raw = _docker_get("/v1.43/containers/json?all=1")
     except Exception as exc:
-        return [], str(exc)[:120]
+        print(f"docker API: {exc}", file=sys.stderr, flush=True)
+        return [], "no se pudo consultar la API de Docker"
 
     containers = []
     for item in raw:
@@ -651,6 +678,21 @@ def _containers_status(containers: list[dict[str, Any]], error: str | None) -> s
     if any(c["state"] not in ("running", "created") for c in containers):
         return STATUS_DEGRADED
     return STATUS_OK
+
+
+_payload_lock = threading.Lock()
+_payload_cache: tuple[float, dict[str, Any]] | None = None
+
+
+def cached_payload() -> dict[str, Any]:
+    global _payload_cache
+    with _payload_lock:
+        ahora = time.monotonic()
+        if _payload_cache and ahora - _payload_cache[0] < PAYLOAD_CACHE_SECONDS:
+            return _payload_cache[1]
+        payload = build_payload()
+        _payload_cache = (time.monotonic(), payload)
+        return payload
 
 
 def build_payload() -> dict[str, Any]:
@@ -699,15 +741,18 @@ def build_payload() -> dict[str, Any]:
 
 
 class OntoyHandler(http.server.BaseHTTPRequestHandler):
+    timeout = REQUEST_TIMEOUT
+
     def do_GET(self) -> None:
         if self.path.split("?")[0] != "/ontoy":
             self.send_error(404)
             return
 
         try:
-            payload = build_payload()
+            payload = cached_payload()
         except Exception as exc:
-            self.send_error(500, f"error building payload: {exc}")
+            print(f"error construyendo el payload: {exc!r}", file=sys.stderr, flush=True)
+            self.send_error(500, "error interno")
             return
 
         body = json.dumps(payload).encode()
@@ -722,7 +767,32 @@ class OntoyHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
+class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], handler: type, max_threads: int) -> None:
+        super().__init__(address, handler)
+        self._cupos = threading.BoundedSemaphore(max_threads)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._cupos.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._cupos.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._cupos.release()
+
+
 if __name__ == "__main__":
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), OntoyHandler)
+    _uso_por_core()
+    server = BoundedThreadingHTTPServer(("0.0.0.0", PORT), OntoyHandler, MAX_THREADS)
     print(f"ontoy server listening on :{PORT}", flush=True)
     server.serve_forever()

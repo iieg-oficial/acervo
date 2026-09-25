@@ -11,6 +11,26 @@ ALL_BUCKETS="${ACERVO_BUCKETS:?ACERVO_BUCKETS is required}"
 PUBLIC_BUCKETS="${ACERVO_PUBLIC_BUCKETS:-portal mapalab iieg}"
 ADMIN_AK="${ACERVO_ADMIN_ACCESS_KEY:?ACERVO_ADMIN_ACCESS_KEY is required}"
 ADMIN_SK="${ACERVO_ADMIN_SECRET_KEY:?ACERVO_ADMIN_SECRET_KEY is required}"
+
+case "$ADMIN_AK" in
+    '<'*)
+        echo "ERROR: ACERVO_ADMIN_ACCESS_KEY conserva el placeholder del ejemplo; define uno propio en .env" >&2
+        exit 1
+        ;;
+esac
+
+case "$ADMIN_SK" in
+    replace_with_random_32_chars|'<'*)
+        echo "ERROR: ACERVO_ADMIN_SECRET_KEY conserva el valor del ejemplo; generalo con: openssl rand -base64 24" >&2
+        exit 1
+        ;;
+esac
+
+if [ "${#ADMIN_SK}" -lt 32 ]; then
+    echo "ERROR: ACERVO_ADMIN_SECRET_KEY tiene ${#ADMIN_SK} caracteres; el minimo es 32 (openssl rand -base64 24)" >&2
+    exit 1
+fi
+
 ROTATE_FLAG="${ROTATE_FLAG:-0}"
 TARGET_BUCKET="${TARGET_BUCKET:-}"
 
@@ -36,6 +56,7 @@ get_existing_secret() {
     fi
 }
 
+umask 077
 TMP=$(mktemp)
 cat > "$TMP" <<EOF
 {
@@ -68,12 +89,7 @@ for BUCKET in $ALL_BUCKETS; do
 
     if [ "$ROTATE_THIS" = "1" ]; then
         SECRET=$(randstr)
-        PRINTED="${PRINTED}
-==========================================
-  Bucket:    $BUCKET
-  AccessKey: $USER
-  SecretKey: $SECRET
-=========================================="
+        PRINTED="${PRINTED} ${USER}"
     else
         SECRET="$EXISTING"
     fi
@@ -117,7 +133,8 @@ chown "${SEAWEEDFS_UID:-1000}:${SEAWEEDFS_GID:-1000}" "$CONFIG_FILE" 2>/dev/null
 chmod 640 "$CONFIG_FILE"
 
 if [ -n "$PRINTED" ]; then
-    echo "$PRINTED"
+    echo "  Secretos nuevos para:${PRINTED}"
+    echo "  Se leen en el host, no aqui: jq -r '.identities[] | select(.name == \"<bucket>-user\") | .credentials[0].secretKey' config/identities.json"
     echo ""
 fi
 
