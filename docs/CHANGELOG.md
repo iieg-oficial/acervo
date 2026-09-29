@@ -10,6 +10,12 @@ El changelog se individualizó **por versión mayor**. El contenido vive en
 > La versión vigente está en [`VERSION`](../VERSION). La fecha de cada release se lee
 > de `docs/changelog/v<MAJOR>.md` (usado por `make version-json` para el sidecar `/ontoy`).
 
+## [2.3.2] - 2026-09-29
+
+### Corregido
+
+- El proxy del socket de Docker del sidecar `/ontoy` deja de ser `tecnativa/docker-socket-proxy`: con `CONTAINERS=1` también dejaba pedir `/containers/{id}/json` (el entorno, con secretos), `logs` y `archive` de cualquier contenedor del host. Ahora es `nginx:1.30.4-alpine` sin root, de solo lectura y sin capacidades, con `version-api/docker-proxy.conf`, que solo deja pasar `GET /containers/json` (con o sin prefijo `/vX.Y/`) y responde 403 a todo lo demás. Pide `DOCKER_GID` en el `.env`.
+
 ## [2.3.1] - 2026-09-29
 
 ### Corregido

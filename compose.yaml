@@ -74,16 +74,21 @@ services:
     logging: *logging
 
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:v0.5.0
+    image: nginx:1.30.4-alpine
     container_name: acervo-docker-socket-proxy
     restart: unless-stopped
-    environment:
-      CONTAINERS: 1
-      EVENTS: 0
-      PING: 0
-      VERSION: 0
-      POST: 0
+    user: "101:101"
+    group_add:
+      - ${DOCKER_GID:?}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
+      - ./version-api/docker-proxy.conf:/etc/nginx/nginx.conf:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - docker-api
