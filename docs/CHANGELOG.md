@@ -10,6 +10,12 @@ El changelog se individualizó **por versión mayor**. El contenido vive en
 > La versión vigente está en [`VERSION`](../VERSION). La fecha de cada release se lee
 > de `docs/changelog/v<MAJOR>.md` (usado por `make version-json` para el sidecar `/ontoy`).
 
+## [2.3.1] - 2026-09-29
+
+### Corregido
+
+- El check `containers` de `/ontoy` ya no marca degradado un contenedor de un solo uso que terminó con código 0 (el `monitor-data-init` de huachicol), y el sidecar deja de contar su propia salud, que lo dejaba en `unhealthy` en cada arranque.
+
 ## [2.3.0] - 2026-09-24
 
 Reparaciones de la auditoria de seguridad del 2026-09-24 (`context-ame-esta`,

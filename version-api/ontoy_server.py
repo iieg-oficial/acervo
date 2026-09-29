@@ -646,17 +646,27 @@ def _list_containers() -> tuple[list[dict[str, Any]], str | None]:
         project = labels.get("com.docker.compose.project", "")
         if COMPOSE_PROJECT and project != COMPOSE_PROJECT:
             continue
+        if _es_este_contenedor(item.get("Id", "")):
+            continue
         name = (item.get("Names") or ["/desconocido"])[0].lstrip("/")
         state = item.get("State", "unknown")
+        status_text = item.get("Status", "")
+        if state == "exited" and status_text.startswith("Exited (0)"):
+            state = "completed"
         containers.append({
             "name": name,
             "state": state,
-            "health": _container_health(item.get("Status", "")),
+            "health": _container_health(status_text),
             "image": item.get("Image", ""),
             "project": project or None,
         })
     containers.sort(key=lambda c: c["name"])
     return containers, None
+
+
+def _es_este_contenedor(container_id: str) -> bool:
+    propio = socket.gethostname()
+    return bool(container_id) and len(propio) >= 12 and container_id.startswith(propio)
 
 
 def _container_health(status_text: str) -> str | None:
@@ -675,7 +685,7 @@ def _containers_status(containers: list[dict[str, Any]], error: str | None) -> s
         return STATUS_OK
     if any(c["health"] == "unhealthy" for c in containers):
         return STATUS_DOWN
-    if any(c["state"] not in ("running", "created") for c in containers):
+    if any(c["state"] not in ("running", "created", "completed") for c in containers):
         return STATUS_DEGRADED
     return STATUS_OK
 
