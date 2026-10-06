@@ -2,30 +2,74 @@ import http.client
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
+import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-VERSION_FILE_PATH = Path("/app/VERSION")
+VERSION_FILE_PATH = Path(os.environ.get("ONTOY_VERSION_FILE", "/app/VERSION"))
+CHANGELOG_FILE_PATH = Path(os.environ.get("ONTOY_CHANGELOG_FILE", "/app/CHANGELOG.md"))
 STARTED_AT = datetime.now(timezone.utc)
 DOCKER_SOCKET_PATH = Path("/var/run/docker.sock")
+DOCKER_HOST = os.environ.get("DOCKER_HOST", "").strip()
 PORT = 8088
 SERVICE = os.environ.get("ONTOY_SERVICE", "huachicol")
 COMPOSE_PROJECT = os.environ.get("ONTOY_COMPOSE_PROJECT", "")
 DISK_PATH = os.environ.get("ONTOY_DISK_PATH", "/")
 DISK_WARN_PERCENT = float(os.environ.get("ONTOY_DISK_WARN_PERCENT", "85"))
 DISK_CRITICAL_PERCENT = float(os.environ.get("ONTOY_DISK_CRITICAL_PERCENT", "95"))
+UPSTREAM_URL = os.environ.get("ONTOY_UPSTREAM_URL", "").strip()
+NODE = os.environ.get("ONTOY_NODE", "").strip()
+NODE_REPORTER = os.environ.get("ONTOY_NODE_REPORTER", "").strip().lower() in ("1", "true", "si")
+PROC_PATH = Path(os.environ.get("ONTOY_PROC_PATH", "/proc"))
+OS_RELEASE_PATH = Path(os.environ.get("ONTOY_OS_RELEASE_FILE", "/host/etc/os-release"))
+NODE_IP = os.environ.get("ONTOY_NODE_IP", "").strip()
+THERMAL_PATH = Path(os.environ.get("ONTOY_THERMAL_PATH", "/sys/class/thermal"))
+HWMON_PATH = Path(os.environ.get("ONTOY_HWMON_PATH", "/sys/class/hwmon"))
+TEMP_WARN = float(os.environ.get("ONTOY_TEMP_WARN", "70"))
+TEMP_CRITICAL = float(os.environ.get("ONTOY_TEMP_CRITICAL", "85"))
+LOAD_WARN_PER_CORE = float(os.environ.get("ONTOY_LOAD_WARN_PER_CORE", "0.9"))
+LOAD_CRITICAL_PER_CORE = float(os.environ.get("ONTOY_LOAD_CRITICAL_PER_CORE", "1.5"))
+MEMORY_WARN_PERCENT = float(os.environ.get("ONTOY_MEMORY_WARN_PERCENT", "80"))
+MEMORY_CRITICAL_PERCENT = float(os.environ.get("ONTOY_MEMORY_CRITICAL_PERCENT", "92"))
+SWAP_WARN_PERCENT = float(os.environ.get("ONTOY_SWAP_WARN_PERCENT", "10"))
 DEPENDENCY_TIMEOUT = 2.0
+PEER_TIMEOUT = float(os.environ.get("ONTOY_PEER_TIMEOUT", "0.8"))
+MAX_THREADS = int(os.environ.get("ONTOY_MAX_THREADS", "8"))
+REQUEST_TIMEOUT = float(os.environ.get("ONTOY_REQUEST_TIMEOUT", "5"))
+PAYLOAD_CACHE_SECONDS = float(os.environ.get("ONTOY_CACHE_SECONDS", "2"))
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
 STATUS_DOWN = "down"
 
 _SEVERITY = {STATUS_OK: 0, STATUS_DEGRADED: 1, STATUS_DOWN: 2}
+
+INFORMATIVOS = ("carga", "memoria", "swap", "temperatura")
+
+
+def _es_informativo(nombre: str) -> bool:
+    return nombre in INFORMATIVOS or nombre.startswith("peer_")
+
+
+def _criticos(checks: dict[str, Any]) -> list[str]:
+    return [
+        check["status"] for nombre, check in checks.items() if not _es_informativo(nombre)
+    ]
+
+
+def _marcar_informativos(checks: dict[str, Any]) -> None:
+    for nombre, check in checks.items():
+        if _es_informativo(nombre):
+            check["informativo"] = True
 
 
 class _UnixHTTPConnection(http.client.HTTPConnection):
@@ -46,13 +90,48 @@ def _worst(statuses: list[str]) -> str:
     return max(statuses, key=lambda s: _SEVERITY.get(s, 0))
 
 
+def _version_de_pyproject(texto: str) -> str | None:
+    match = re.search(r'^version\s*=\s*["\']([^"\']+)', texto, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _version_de_package_json(texto: str) -> str | None:
+    try:
+        return json.loads(texto).get("version")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _version_del_archivo(ruta: Path) -> str | None:
+    try:
+        texto = ruta.read_text()
+    except OSError:
+        return None
+    if ruta.name == "pyproject.toml":
+        return _version_de_pyproject(texto)
+    if ruta.name == "package.json":
+        return _version_de_package_json(texto)
+    return texto.strip() or None
+
+
 def _read_version() -> dict[str, Any]:
-    if VERSION_FILE_PATH.exists():
-        return {
-            "version": VERSION_FILE_PATH.read_text().strip(),
-            "service": SERVICE,
-        }
-    return {"version": None, "service": SERVICE}
+    version = _version_del_archivo(VERSION_FILE_PATH) if VERSION_FILE_PATH.exists() else None
+    payload: dict[str, Any] = {"version": version, "service": SERVICE}
+    released_at = _released_at()
+    if released_at:
+        payload["released_at"] = released_at
+    return payload
+
+
+def _released_at() -> str | None:
+    if not CHANGELOG_FILE_PATH.exists():
+        return None
+    try:
+        texto = CHANGELOG_FILE_PATH.read_text()
+    except OSError:
+        return None
+    match = re.search(r"^##\s*\[[^\]]+\]\s*-\s*(\d{4}-\d{2}-\d{2})", texto, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def _deployed_at() -> str:
@@ -106,6 +185,400 @@ def _check_dependency(url: str) -> dict[str, Any]:
         return {"status": STATUS_DOWN, "detail": str(exc)[:120]}
 
 
+def _fetch_upstream(url: str) -> tuple[dict[str, Any], str | None]:
+    try:
+        request = urllib.request.Request(
+            url, method="GET", headers={"Accept": "application/json"}
+        )
+        with urllib.request.urlopen(request, timeout=DEPENDENCY_TIMEOUT) as response:
+            return json.loads(response.read()), None
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read()), None
+        except Exception:
+            return {}, f"HTTP {exc.code}"
+    except Exception as exc:
+        return {}, str(exc)[:120]
+
+
+def _merge_upstream(payload: dict[str, Any], checks: dict[str, Any]) -> None:
+    upstream, error = _fetch_upstream(UPSTREAM_URL)
+    if error:
+        checks["upstream"] = {"status": STATUS_DOWN, "detail": error}
+        return
+
+    for name, check in (upstream.get("checks") or {}).items():
+        if isinstance(check, dict) and "status" in check:
+            checks.setdefault(name, check)
+
+    for field in ("version", "released_at", "deployed_at"):
+        if not payload.get(field) and upstream.get(field):
+            payload[field] = upstream[field]
+
+    declared = upstream.get("status")
+    merged = _worst(_criticos(checks))
+    if declared in _SEVERITY and _SEVERITY[declared] > _SEVERITY[merged]:
+        checks["upstream"] = {
+            "status": declared,
+            "detail": f"el servicio se declara {declared} sin un check que lo explique",
+        }
+
+
+def _leer_proc(nombre: str) -> str | None:
+    try:
+        return (PROC_PATH / nombre).read_text()
+    except OSError:
+        return None
+
+
+def _cpu_cores() -> int:
+    return os.cpu_count() or 1
+
+
+def _lecturas_cpu() -> dict[str, tuple[int, int]]:
+    """Por core: (tiempo total, tiempo ocioso), acumulados desde el arranque."""
+    contenido = _leer_proc("stat")
+    if not contenido:
+        return {}
+    lecturas = {}
+    for linea in contenido.splitlines():
+        if not linea.startswith("cpu") or linea.startswith("cpu "):
+            continue
+        partes = linea.split()
+        try:
+            valores = [int(v) for v in partes[1:]]
+        except ValueError:
+            continue
+        if len(valores) < 5:
+            continue
+        lecturas[partes[0]] = (sum(valores), valores[3] + valores[4])
+    return lecturas
+
+
+_cpu_lock = threading.Lock()
+_cpu_previa: dict[str, tuple[int, int]] = {}
+_cpu_usos: list[dict[str, Any]] = []
+
+
+def _uso_por_core() -> list[dict[str, Any]]:
+    """Uso de cada core entre esta lectura y la anterior: /proc/stat solo da acumulados."""
+    global _cpu_previa, _cpu_usos
+    with _cpu_lock:
+        actual = _lecturas_cpu()
+        if not actual:
+            return []
+        usos = []
+        for nombre, (total_ahora, ocio_ahora) in sorted(
+            actual.items(), key=lambda par: int(par[0][3:])
+        ):
+            if nombre not in _cpu_previa:
+                continue
+            total_previo, ocio_previo = _cpu_previa[nombre]
+            delta_total = total_ahora - total_previo
+            if delta_total <= 0:
+                continue
+            delta_activo = delta_total - (ocio_ahora - ocio_previo)
+            usos.append({
+                "core": int(nombre[3:]),
+                "uso": max(0, min(100, round(delta_activo / delta_total * 100))),
+            })
+        _cpu_previa = actual
+        if usos:
+            _cpu_usos = usos
+        return list(_cpu_usos)
+
+
+def _check_carga() -> dict[str, Any] | None:
+    contenido = _leer_proc("loadavg")
+    if not contenido:
+        return None
+    partes = contenido.split()
+    if len(partes) < 3:
+        return None
+    try:
+        uno, cinco, quince = (float(p) for p in partes[:3])
+    except ValueError:
+        return None
+
+    nucleos = _cpu_cores()
+    por_nucleo = uno / nucleos
+    if por_nucleo >= LOAD_CRITICAL_PER_CORE:
+        estado = STATUS_DOWN
+    elif por_nucleo >= LOAD_WARN_PER_CORE:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    return {
+        "status": estado,
+        "load_1m": round(uno, 2),
+        "load_5m": round(cinco, 2),
+        "load_15m": round(quince, 2),
+        "cores": nucleos,
+        "load_per_core": round(por_nucleo, 2),
+    }
+
+
+def _meminfo() -> dict[str, int]:
+    contenido = _leer_proc("meminfo")
+    if not contenido:
+        return {}
+    valores: dict[str, int] = {}
+    for linea in contenido.splitlines():
+        clave, _, resto = linea.partition(":")
+        numero = resto.strip().split(" ")[0]
+        if numero.isdigit():
+            valores[clave] = int(numero)
+    return valores
+
+
+def _check_memoria() -> dict[str, Any] | None:
+    valores = _meminfo()
+    total = valores.get("MemTotal")
+    if not total:
+        return None
+    disponible = valores.get("MemAvailable", valores.get("MemFree", 0))
+    usado = total - disponible
+    porcentaje = usado / total * 100
+    if porcentaje >= MEMORY_CRITICAL_PERCENT:
+        estado = STATUS_DOWN
+    elif porcentaje >= MEMORY_WARN_PERCENT:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    cache = valores.get("Cached", 0) + valores.get("Buffers", 0)
+    return {
+        "status": estado,
+        "used_percent": round(porcentaje, 1),
+        "used_gb": round(usado / 1024 / 1024, 2),
+        "total_gb": round(total / 1024 / 1024, 2),
+        "cache_gb": round(cache / 1024 / 1024, 2),
+        "free_gb": round(valores.get("MemFree", 0) / 1024 / 1024, 2),
+    }
+
+
+def _check_swap() -> dict[str, Any] | None:
+    valores = _meminfo()
+    total = valores.get("SwapTotal")
+    if not total:
+        return None
+    libre = valores.get("SwapFree", 0)
+    usado = total - libre
+    porcentaje = usado / total * 100
+    estado = STATUS_DEGRADED if porcentaje >= SWAP_WARN_PERCENT else STATUS_OK
+    return {
+        "status": estado,
+        "used_percent": round(porcentaje, 1),
+        "used_gb": round(usado / 1024 / 1024, 2),
+        "total_gb": round(total / 1024 / 1024, 2),
+    }
+
+
+def _uptime_segundos() -> int | None:
+    contenido = _leer_proc("uptime")
+    if not contenido:
+        return None
+    try:
+        return int(float(contenido.split()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_peer_checks() -> list[tuple[str, str, int]]:
+    raw = os.environ.get("ONTOY_PEER_CHECKS", "").strip()
+    if not raw:
+        return []
+    aristas = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        nodo, destino = item.split("=", 1)
+        host, _, puerto = destino.strip().rpartition(":")
+        if not host or not puerto.isdigit():
+            continue
+        aristas.append((nodo.strip(), host, int(puerto)))
+    return aristas
+
+
+def _check_peer(host: str, puerto: int) -> dict[str, Any]:
+    inicio = time.monotonic()
+    try:
+        with socket.create_connection((host, puerto), timeout=PEER_TIMEOUT):
+            latencia = int((time.monotonic() - inicio) * 1000)
+            return {"status": STATUS_OK, "port": puerto, "latency_ms": latencia}
+    except Exception as exc:
+        return {"status": STATUS_DOWN, "port": puerto, "detail": str(exc)[:120]}
+
+
+def _kernel() -> str | None:
+    contenido = _leer_proc("version")
+    if not contenido:
+        return None
+    partes = contenido.split()
+    return partes[2] if len(partes) > 2 else None
+
+
+def _sistema_operativo() -> str | None:
+    try:
+        contenido = OS_RELEASE_PATH.read_text()
+    except OSError:
+        return None
+    for linea in contenido.splitlines():
+        if linea.startswith("PRETTY_NAME="):
+            return linea.split("=", 1)[1].strip().strip('"') or None
+    return None
+
+
+SENSORES = (
+    ("coretemp", "CPU"),
+    ("k10temp", "CPU"),
+    ("cpu_thermal", "CPU"),
+    ("acpitz", "Sistema"),
+    ("nvme", "Disco"),
+    ("amdgpu", "Gráficos"),
+    ("nouveau", "Gráficos"),
+    ("i915", "Gráficos"),
+)
+
+
+def _leer_grados(ruta: Path) -> float | None:
+    try:
+        grados = int(ruta.read_text().strip()) / 1000
+    except (OSError, ValueError):
+        return None
+    return grados if 0 < grados < 150 else None
+
+
+def _sensor_de_chip(carpeta: Path) -> float | None:
+    """El paquete del chip si lo declara; si no, su lectura mas alta."""
+    lecturas = []
+    for entrada in sorted(carpeta.glob("temp*_input")):
+        grados = _leer_grados(entrada)
+        if grados is None:
+            continue
+        etiqueta = ""
+        archivo_etiqueta = entrada.parent / entrada.name.replace("_input", "_label")
+        try:
+            etiqueta = archivo_etiqueta.read_text().strip()
+        except OSError:
+            pass
+        if etiqueta.lower().startswith(("package", "composite", "tctl")):
+            return grados
+        lecturas.append(grados)
+    return max(lecturas) if lecturas else None
+
+
+def _sensores_temperatura() -> list[dict[str, Any]]:
+    encontrados: dict[str, float] = {}
+    try:
+        carpetas = sorted(HWMON_PATH.glob("hwmon*"))
+    except OSError:
+        carpetas = []
+
+    for carpeta in carpetas:
+        try:
+            chip = (carpeta / "name").read_text().strip()
+        except OSError:
+            continue
+        nombre = next((n for clave, n in SENSORES if chip.startswith(clave)), None)
+        if not nombre:
+            continue
+        grados = _sensor_de_chip(carpeta)
+        if grados is None:
+            continue
+        encontrados[nombre] = max(encontrados.get(nombre, 0), grados)
+
+    if not encontrados:
+        respaldo = _temperatura_thermal()
+        if respaldo is not None:
+            encontrados["Sistema"] = respaldo
+
+    orden = [n for _, n in SENSORES]
+    return [
+        {"nombre": nombre, "celsius": round(grados)}
+        for nombre, grados in sorted(encontrados.items(), key=lambda par: orden.index(par[0]))
+    ]
+
+
+def _temperatura_thermal() -> float | None:
+    lecturas = []
+    try:
+        zonas = sorted(THERMAL_PATH.glob("thermal_zone*"))
+    except OSError:
+        return None
+    for zona in zonas:
+        grados = _leer_grados(zona / "temp")
+        if grados is not None:
+            lecturas.append(grados)
+    return max(lecturas) if lecturas else None
+
+
+def _check_temperatura(grados: int) -> dict[str, Any]:
+    if grados >= TEMP_CRITICAL:
+        estado = STATUS_DOWN
+    elif grados >= TEMP_WARN:
+        estado = STATUS_DEGRADED
+    else:
+        estado = STATUS_OK
+    return {"status": estado, "celsius": grados}
+
+
+def _host_metrics(checks: dict[str, Any]) -> dict[str, Any]:
+    metricas: dict[str, Any] = {"cores": _cpu_cores()}
+
+    if NODE_IP:
+        metricas["ip"] = NODE_IP
+
+    kernel = _kernel()
+    if kernel:
+        metricas["kernel"] = kernel
+
+    sistema = _sistema_operativo()
+    if sistema:
+        metricas["os"] = sistema
+
+    cores = _uso_por_core()
+    if cores:
+        metricas["cores_uso"] = cores
+        metricas["cpu_used_percent"] = round(sum(c["uso"] for c in cores) / len(cores))
+
+    carga = _check_carga()
+    if carga:
+        checks["carga"] = carga
+        metricas["load_1m"] = carga["load_1m"]
+        metricas["load_5m"] = carga["load_5m"]
+        metricas["load_15m"] = carga["load_15m"]
+
+    memoria = _check_memoria()
+    if memoria:
+        checks["memoria"] = memoria
+        metricas["memory_used_gb"] = memoria["used_gb"]
+        metricas["memory_total_gb"] = memoria["total_gb"]
+        metricas["memory_used_percent"] = memoria["used_percent"]
+        metricas["memory_cache_gb"] = memoria["cache_gb"]
+        metricas["memory_free_gb"] = memoria["free_gb"]
+
+    swap = _check_swap()
+    if swap:
+        checks["swap"] = swap
+        metricas["swap_used_gb"] = swap["used_gb"]
+        metricas["swap_used_percent"] = swap["used_percent"]
+
+    sensores = _sensores_temperatura()
+    if sensores:
+        metricas["temperaturas"] = sensores
+        cpu = next((s for s in sensores if s["nombre"] == "CPU"), None)
+        if cpu:
+            metricas["cpu_celsius"] = cpu["celsius"]
+        checks["temperatura"] = _check_temperatura(max(s["celsius"] for s in sensores))
+
+    segundos = _uptime_segundos()
+    if segundos is not None:
+        metricas["uptime_seconds"] = segundos
+
+    return metricas
+
+
 def _parse_port_checks() -> list[tuple[str, str, int]]:
     raw = os.environ.get("ONTOY_PORT_CHECKS", "").strip()
     if not raw:
@@ -131,8 +604,21 @@ def _check_port(host: str, port: int) -> dict[str, Any]:
         return {"status": STATUS_DOWN, "port": port, "detail": str(exc)[:120]}
 
 
+def _docker_connection() -> http.client.HTTPConnection:
+    if DOCKER_HOST.startswith("tcp://"):
+        destino = urlsplit(DOCKER_HOST)
+        return http.client.HTTPConnection(
+            destino.hostname or "localhost", destino.port or 2375, timeout=DEPENDENCY_TIMEOUT
+        )
+    return _UnixHTTPConnection(str(DOCKER_SOCKET_PATH), timeout=DEPENDENCY_TIMEOUT)
+
+
+def _docker_disponible() -> bool:
+    return DOCKER_HOST.startswith("tcp://") or DOCKER_SOCKET_PATH.exists()
+
+
 def _docker_get(path: str) -> Any:
-    connection = _UnixHTTPConnection(str(DOCKER_SOCKET_PATH), timeout=DEPENDENCY_TIMEOUT)
+    connection = _docker_connection()
     try:
         connection.request("GET", path, headers={"Host": "localhost"})
         response = connection.getresponse()
@@ -145,13 +631,14 @@ def _docker_get(path: str) -> Any:
 
 
 def _list_containers() -> tuple[list[dict[str, Any]], str | None]:
-    if not DOCKER_SOCKET_PATH.exists():
+    if not _docker_disponible():
         return [], None
 
     try:
         raw = _docker_get("/v1.43/containers/json?all=1")
     except Exception as exc:
-        return [], str(exc)[:120]
+        print(f"docker API: {exc}", file=sys.stderr, flush=True)
+        return [], "no se pudo consultar la API de Docker"
 
     containers = []
     for item in raw:
@@ -159,17 +646,27 @@ def _list_containers() -> tuple[list[dict[str, Any]], str | None]:
         project = labels.get("com.docker.compose.project", "")
         if COMPOSE_PROJECT and project != COMPOSE_PROJECT:
             continue
+        if _es_este_contenedor(item.get("Id", "")):
+            continue
         name = (item.get("Names") or ["/desconocido"])[0].lstrip("/")
         state = item.get("State", "unknown")
+        status_text = item.get("Status", "")
+        if state == "exited" and status_text.startswith("Exited (0)"):
+            state = "completed"
         containers.append({
             "name": name,
             "state": state,
-            "health": _container_health(item.get("Status", "")),
+            "health": _container_health(status_text),
             "image": item.get("Image", ""),
             "project": project or None,
         })
     containers.sort(key=lambda c: c["name"])
     return containers, None
+
+
+def _es_este_contenedor(container_id: str) -> bool:
+    propio = socket.gethostname()
+    return bool(container_id) and len(propio) >= 12 and container_id.startswith(propio)
 
 
 def _container_health(status_text: str) -> str | None:
@@ -188,9 +685,24 @@ def _containers_status(containers: list[dict[str, Any]], error: str | None) -> s
         return STATUS_OK
     if any(c["health"] == "unhealthy" for c in containers):
         return STATUS_DOWN
-    if any(c["state"] not in ("running", "created") for c in containers):
+    if any(c["state"] not in ("running", "created", "completed") for c in containers):
         return STATUS_DEGRADED
     return STATUS_OK
+
+
+_payload_lock = threading.Lock()
+_payload_cache: tuple[float, dict[str, Any]] | None = None
+
+
+def cached_payload() -> dict[str, Any]:
+    global _payload_cache
+    with _payload_lock:
+        ahora = time.monotonic()
+        if _payload_cache and ahora - _payload_cache[0] < PAYLOAD_CACHE_SECONDS:
+            return _payload_cache[1]
+        payload = build_payload()
+        _payload_cache = (time.monotonic(), payload)
+        return payload
 
 
 def build_payload() -> dict[str, Any]:
@@ -215,21 +727,42 @@ def build_payload() -> dict[str, Any]:
         if containers_error:
             checks["containers"]["detail"] = containers_error
 
+    peers = {}
+    for nodo, host, puerto in _parse_peer_checks():
+        resultado = _check_peer(host, puerto)
+        peers[nodo] = resultado
+        checks[f"peer_{nodo}"] = resultado
+    if peers:
+        payload["peers"] = peers
+
+    if NODE:
+        payload["node"] = NODE
+        payload["node_reporter"] = NODE_REPORTER
+        if NODE_REPORTER:
+            payload["host"] = _host_metrics(checks)
+
+    if UPSTREAM_URL:
+        _merge_upstream(payload, checks)
+
+    _marcar_informativos(checks)
     payload["checks"] = checks
-    payload["status"] = _worst([c["status"] for c in checks.values()])
+    payload["status"] = _worst(_criticos(checks))
     return payload
 
 
 class OntoyHandler(http.server.BaseHTTPRequestHandler):
+    timeout = REQUEST_TIMEOUT
+
     def do_GET(self) -> None:
         if self.path.split("?")[0] != "/ontoy":
             self.send_error(404)
             return
 
         try:
-            payload = build_payload()
+            payload = cached_payload()
         except Exception as exc:
-            self.send_error(500, f"error building payload: {exc}")
+            print(f"error construyendo el payload: {exc!r}", file=sys.stderr, flush=True)
+            self.send_error(500, "error interno")
             return
 
         body = json.dumps(payload).encode()
@@ -244,7 +777,32 @@ class OntoyHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
+class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], handler: type, max_threads: int) -> None:
+        super().__init__(address, handler)
+        self._cupos = threading.BoundedSemaphore(max_threads)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._cupos.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._cupos.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._cupos.release()
+
+
 if __name__ == "__main__":
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), OntoyHandler)
+    _uso_por_core()
+    server = BoundedThreadingHTTPServer(("0.0.0.0", PORT), OntoyHandler, MAX_THREADS)
     print(f"ontoy server listening on :{PORT}", flush=True)
     server.serve_forever()

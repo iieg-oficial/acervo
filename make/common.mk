@@ -63,8 +63,9 @@ deploy: $(DEPLOY_PRE) ## Actualizar, reconstruir y levantar produccion (VERBOSE=
 	git_sync
 	$(DEPLOY_GUARDS)
 	rule
+	run_step 'Build' dc prod build
 	run_step 'Down' dc prod down --remove-orphans
-	run_step 'Build+Up' $(DEPLOY_CMD)
+	run_step 'Up' $(DEPLOY_CMD)
 	$(DEPLOY_POST)
 	rule
 	total=$$(( $$(date +%s) - start ))
@@ -80,17 +81,25 @@ down: ## Detener lo que este levantado
 	rule
 	printf '\n'
 
-restart: ## Reiniciar el entorno activo
-	@$(MAKE) down
-	$(MAKE) up
+restart: ## Reiniciar el entorno activo, sin cambiarlo
+	@$(LIB)
+	envs=$$(active_envs)
+	if [ -z "$$envs" ]; then nothing_running 'RESTART'; exit 0; fi
+	banner 'RESTART' "$$envs"
+	for e in $$envs; do run_step "$$e" dc "$$e" restart; done
+	rule
+	printf '\n'
 
 clean: ## Detener y borrar volumenes
 	@$(LIB)
 	envs=$$(active_envs)
-	banner 'CLEAN' "$${envs:-nada levantado}"
-	confirm 'Esto elimina contenedores, redes y TODOS los volumenes del repo.' 'borrar'
+	if [ -z "$$envs" ]; then nothing_running 'CLEAN'; exit 0; fi
+	banner 'CLEAN' "$$envs"
+	palabra=borrar
+	case " $$envs " in *' prod '*) palabra=produccion ;; esac
+	confirm 'Esto elimina contenedores, redes y TODOS los volumenes del repo.' "$$palabra"
 	rule
-	for e in $${envs:-prod}; do run_step "$$e" dc "$$e" down -v --remove-orphans; done
+	for e in $$envs; do run_step "$$e" dc "$$e" down -v --remove-orphans; done
 	$(CLEAN_EXTRA)
 	rule
 	printf '\n'

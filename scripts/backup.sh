@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -40,6 +41,10 @@ LOG_FILE="${LOG_DIR}/backup-${TIMESTAMP}.log"
 MONTHLY_DIR="${BACKUP_DIR}/monthly/${DATE}"
 
 mkdir -p "$LOG_DIR" "$MONTHLY_DIR"
+chmod 700 "$BACKUP_DIR" "${BACKUP_DIR}/monthly" "$LOG_DIR" 2>/dev/null || true
+
+source "$SCRIPT_DIR/mc-host.sh"
+export_mc_host "$SEAWEEDFS_CONTAINER"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -56,12 +61,9 @@ for BUCKET in $BUCKETS; do
 
     docker run --rm \
         --network "${NETWORK}" \
+        -e MC_HOST_acervo \
         -v "${MONTHLY_DIR}:/backup" \
-        --entrypoint=/bin/sh \
-        "$MC_IMAGE" -c "
-            mc alias set acervo http://${SEAWEEDFS_CONTAINER}:8333 '${ACERVO_ADMIN_ACCESS_KEY}' '${ACERVO_ADMIN_SECRET_KEY}' && \
-            mc mirror acervo/${BUCKET} /backup/${BUCKET}
-        " 2>&1 | tee -a "$LOG_FILE"
+        "$MC_IMAGE" mirror "acervo/${BUCKET}" "/backup/${BUCKET}" 2>&1 | tee -a "$LOG_FILE"
 
     log "Bucket $BUCKET backup complete"
 done
