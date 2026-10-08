@@ -21,3 +21,8 @@ secrets/*
 !secrets/.gitkeep
 !secrets/*.example
 compose.local.yaml
+.restore_staging/
+
+*.bak
+*.bak-*
+*.bak.*
