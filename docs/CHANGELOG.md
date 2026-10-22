@@ -10,6 +10,16 @@ El changelog se individualizó **por versión mayor**. El contenido vive en
 > La versión vigente está en [`VERSION`](../VERSION). La fecha de cada release se lee
 > de `docs/changelog/v<MAJOR>.md` (usado por `make version-json` para el sidecar `/ontoy`).
 
+## [No publicado]
+
+### Corregido
+
+- SeaweedFS pasa de 4.23 a 4.48 (`SEAWEEDFS_VERSION` en `.env.example`; el `.env` de cada VM se
+  cambia a mano). Cierra dos CVE CRITICAL del propio `weed`: CVE-2026-72920 (el servicio gRPC de IAM
+  del filer daba control administrativo de S3 sin autenticar) y CVE-2026-73080 (SSRF sin autenticar
+  en `VolumeServer.FetchAndWriteNeedle`). Probado con un SeaweedFS desechable: lo escrito con 4.23 se
+  lee con 4.48 y escribe bien en cinco de cinco arranques.
+
 ## [2.3.2] - 2026-09-29
 
 ### Corregido
