@@ -50,7 +50,7 @@ services:
     logging: *logging
 
   s3-proxy:
-    image: nginx:1.30.4-alpine
+    image: nginx:1.30.6-alpine
     container_name: acervo-s3-proxy
     user: "101:101"
     volumes:
@@ -74,7 +74,7 @@ services:
     logging: *logging
 
   docker-socket-proxy:
-    image: nginx:1.30.4-alpine
+    image: nginx:1.30.6-alpine
     container_name: acervo-docker-socket-proxy
     restart: unless-stopped
     user: "101:101"
