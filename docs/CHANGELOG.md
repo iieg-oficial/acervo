@@ -10,7 +10,7 @@ El changelog se individualizó **por versión mayor**. El contenido vive en
 > La versión vigente está en [`VERSION`](../VERSION). La fecha de cada release se lee
 > de `docs/changelog/v<MAJOR>.md` (usado por `make version-json` para el sidecar `/ontoy`).
 
-## [No publicado]
+## [2.3.3] - 2026-11-17
 
 ### Corregido
 
