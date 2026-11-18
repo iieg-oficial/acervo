@@ -10,6 +10,12 @@ El changelog se individualizó **por versión mayor**. El contenido vive en
 > La versión vigente está en [`VERSION`](../VERSION). La fecha de cada release se lee
 > de `docs/changelog/v<MAJOR>.md` (usado por `make version-json` para el sidecar `/ontoy`).
 
+## [2.3.4] - 2026-11-17
+
+### Corregido
+
+- SeaweedFS pasa de 4.48 a 4.54 (`SEAWEEDFS_VERSION` en `.env.example`; el `.env` de cada VM se cambia a mano). Quita el CRITICAL de `brotli-libs` y los HIGH del Go y de Alpine: Trivy queda en 0.
+
 ## [2.3.3] - 2026-11-17
 
 ### Corregido
